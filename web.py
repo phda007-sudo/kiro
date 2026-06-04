@@ -23,6 +23,8 @@ from __future__ import annotations
 import argparse
 import os
 import threading
+import time
+import webbrowser
 
 from flask import Flask, jsonify, request
 
@@ -366,27 +368,63 @@ def api_alimentar():
         return jsonify({"erro": f"falha ao alimentar: {e}"}), 500
 
 
-def main() -> int:
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 5000,
+    threshold: float = 0.30,
+    open_browser: bool = False,
+) -> int:
+    """
+    Conecta ao MySQL, inicia o servidor e (opcionalmente) abre o navegador.
+
+    Usado tanto pela linha de comando (`python3 web.py`) quanto pelo executavel
+    (.exe) gerado pelo PyInstaller via launcher.py.
+    """
     global _brain
+    try:
+        _brain = Brain(threshold=threshold)
+    except Exception as e:  # noqa: BLE001
+        print(f"[ERRO] Nao consegui conectar ao MySQL: {e}")
+        print("Defina IA_MYSQL_* nas variaveis de ambiente, se necessario.")
+        return 1
+
+    url = f"http://{host}:{port}"
+    print(f"IA web em {url}  (Ctrl+C para sair)")
+    print(f"Banco: {_brain.stats()['banco']}")
+
+    if open_browser:
+        def _abrir():
+            time.sleep(1.5)
+            try:
+                webbrowser.open(url)
+            except Exception:  # noqa: BLE001
+                pass
+
+        threading.Thread(target=_abrir, daemon=True).start()
+
+    app.run(host=host, port=port, threaded=True)
+    return 0
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Interface web da IA de aprendizado proprio (MySQL)."
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--threshold", type=float, default=0.30)
+    parser.add_argument(
+        "--abrir-navegador",
+        action="store_true",
+        help="abre o navegador automaticamente ao iniciar",
+    )
     args = parser.parse_args()
-
-    try:
-        _brain = Brain(threshold=args.threshold)
-    except Exception as e:  # noqa: BLE001
-        print(f"[ERRO] Nao consegui conectar ao MySQL: {e}")
-        print("Defina IA_MYSQL_* nas variaveis de ambiente, se necessario.")
-        return 1
-
-    print(f"IA web em http://{args.host}:{args.port}  (Ctrl+C para sair)")
-    print(f"Banco: {_brain.stats()['banco']}")
-    app.run(host=args.host, port=args.port, threaded=True)
-    return 0
+    return run_server(
+        host=args.host,
+        port=args.port,
+        threshold=args.threshold,
+        open_browser=args.abrir_navegador,
+    )
 
 
 if __name__ == "__main__":

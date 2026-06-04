@@ -8,3 +8,8 @@ venv/
 
 # Arquivos locais de ambiente (ex.: credenciais MySQL exportadas)
 .env
+
+# Saidas de build do PyInstaller (o .exe e gerado, nao versionado)
+build/
+dist/
+*.manifest

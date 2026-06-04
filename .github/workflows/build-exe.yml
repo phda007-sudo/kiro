@@ -1,0 +1,46 @@
+name: Build Windows EXE
+
+# Gera o intart-ia.exe num runner Windows.
+# - Rode manualmente em Actions (workflow_dispatch) para baixar o .exe como artifact.
+# - Crie uma tag "v*" (ex.: v1.0.0) para publicar uma Release com o .exe (link direto permanente).
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compilar o executavel
+        run: pyinstaller --noconfirm intart-ia.spec
+
+      - name: Publicar artifact (download pela aba Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: intart-ia-windows
+          path: dist/intart-ia.exe
+
+      - name: Publicar Release (quando for uma tag v*)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/intart-ia.exe

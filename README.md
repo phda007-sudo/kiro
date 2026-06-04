@@ -204,6 +204,45 @@ ia.close()
 | `/web` | dica para abrir a interface web |
 | `/ajuda` / `/sair` | ajuda / encerra |
 
+## Gerar o executavel (.exe para Windows)
+
+O programa pode ser empacotado num **executavel unico** com o
+[PyInstaller](https://pyinstaller.org). Ao abrir o `.exe`, ele sobe o servidor
+e abre o navegador automaticamente na interface da IA.
+
+> Importante: o PyInstaller gera o executavel para o sistema onde roda. Para um
+> `.exe` de **Windows**, e preciso compilar **no Windows** (ou usar o GitHub
+> Actions abaixo). Compilar no Linux/macOS gera um binario daquele sistema.
+
+### Opcao A - GitHub Actions (recomendado, sem precisar de Windows)
+
+O repositorio inclui o workflow `.github/workflows/build-exe.yml`, que compila
+o `.exe` num runner Windows:
+
+1. Na aba **Actions** do GitHub, rode o workflow **"Build Windows EXE"**
+   (botao *Run workflow*). Ao terminar, baixe o `intart-ia.exe` em
+   **Artifacts**.
+2. Para um **link de download permanente**, crie uma tag de versao:
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+   O workflow publica automaticamente uma **Release** com o `intart-ia.exe`
+   anexado.
+
+### Opcao B - compilar localmente (no Windows)
+
+```bash
+pip install -r requirements.txt pyinstaller
+pyinstaller --noconfirm intart-ia.spec
+```
+
+O executavel aparece em `dist/intart-ia.exe`. Basta dar dois cliques.
+
+> O `.exe` ainda precisa de internet para acessar o MySQL. As credenciais
+> padrao ja vem embutidas; para troca-las, defina as variaveis de ambiente
+> `IA_MYSQL_*` antes de abrir o programa.
+
 ## Limitacoes (e proximos passos possiveis)
 
 - E uma IA de **recuperacao** (encontra a melhor resposta ja aprendida), nao
