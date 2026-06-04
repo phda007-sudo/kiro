@@ -1,21 +1,21 @@
 """
-Backend de persistencia em MySQL (pymysql).
+Backend de persistencia em MySQL (pymysql) - UNICO banco usado pela IA.
 
-Espelha EXATAMENTE a interface da classe `Database` (SQLite) em
-`ia/database.py`, para que o `Brain` funcione com qualquer um dos dois
-sem alteracoes. Mantem a mesma ideia: conhecimento acumulado + indice
-invertido (token -> documentos) para busca por similaridade.
+Mantem a ideia central: conhecimento acumulado + indice invertido
+(token -> documentos) para busca por similaridade. As tabelas sao criadas
+automaticamente na primeira execucao.
 
-Diferencas de dialeto tratadas aqui:
-    - AUTO_INCREMENT (em vez de AUTOINCREMENT)
-    - placeholders %s (em vez de ?)
-    - upsert via "ON DUPLICATE KEY UPDATE" (em vez de "ON CONFLICT")
+Detalhes do dialeto MySQL:
+    - AUTO_INCREMENT na chave primaria
+    - placeholders %s nas queries
+    - upsert via "ON DUPLICATE KEY UPDATE"
     - VARCHAR(255) nas colunas indexadas (TEXT nao pode ser PK/UNIQUE direto)
     - charset utf8mb4 e engine InnoDB (para FOREIGN KEY ON DELETE CASCADE)
 """
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -23,6 +23,14 @@ import pymysql
 from pymysql.cursors import DictCursor
 
 from . import text
+
+# Credenciais padrao do projeto. Podem ser sobrescritas por variaveis de
+# ambiente (recomendado para nao versionar a senha em repositorio publico).
+DEFAULT_HOST = os.environ.get("IA_MYSQL_HOST", "mysql.50webs.com")
+DEFAULT_USER = os.environ.get("IA_MYSQL_USER", "intart_1")
+DEFAULT_PASS = os.environ.get("IA_MYSQL_PASS", "intart_1")
+DEFAULT_DB = os.environ.get("IA_MYSQL_DB", "intart_1")
+DEFAULT_PORT = int(os.environ.get("IA_MYSQL_PORT", "3306"))
 
 SCHEMA = [
     """
@@ -65,29 +73,29 @@ SCHEMA = [
 
 
 class MySQLDatabase:
-    """Mesmo contrato da `Database` (SQLite), porem sobre MySQL."""
+    """Camada de acesso ao MySQL: aprende, busca e mantem o indice invertido."""
 
     def __init__(
         self,
-        host: str,
-        user: str,
-        password: str,
-        database: str,
-        port: int = 3306,
+        host: str | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
+        port: int | None = None,
         connect_timeout: int = 10,
     ):
         self._conn_kwargs = dict(
-            host=host,
-            user=user,
-            password=password,
-            database=database,
-            port=port,
+            host=host or DEFAULT_HOST,
+            user=user or DEFAULT_USER,
+            password=password if password is not None else DEFAULT_PASS,
+            database=database or DEFAULT_DB,
+            port=port or DEFAULT_PORT,
             connect_timeout=connect_timeout,
             charset="utf8mb4",
             cursorclass=DictCursor,
             autocommit=False,
         )
-        self.database = database
+        self.database = self._conn_kwargs["database"]
         self.conn = pymysql.connect(**self._conn_kwargs)
         for stmt in SCHEMA:
             with self.conn.cursor() as cur:
@@ -264,7 +272,7 @@ class MySQLDatabase:
             "itens_aprendidos": total,
             "tamanho_vocabulario": vocab,
             "total_de_usos": int(uses),
-            "arquivo_banco": f"MySQL://{self._conn_kwargs['host']}/{self.database}",
+            "banco": f"MySQL://{self._conn_kwargs['host']}/{self.database}",
         }
 
     def close(self) -> None:

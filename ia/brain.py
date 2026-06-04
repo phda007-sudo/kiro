@@ -8,7 +8,7 @@ Nao usa nenhuma API externa. A "inteligencia" vem de:
     3. Devolver a melhor resposta se a confianca passar de um limiar;
        caso contrario, admite que nao sabe e pede para aprender.
 
-Quanto mais a IA e ensinada, maior fica o banco e melhores ficam as
+Quanto mais a IA e ensinada, maior fica o banco MySQL e melhores ficam as
 respostas (o conhecimento e acumulado e reaproveitado).
 """
 
@@ -18,7 +18,7 @@ import math
 from dataclasses import dataclass
 
 from . import text
-from .database import Database
+from .db_mysql import MySQLDatabase
 
 
 @dataclass
@@ -44,18 +44,21 @@ class Match:
 class Brain:
     def __init__(
         self,
-        db_path: str = "memoria.db",
         threshold: float = 0.30,
-        db=None,
+        db: MySQLDatabase | None = None,
+        **mysql_kwargs,
     ):
         """
-        :param db_path: arquivo do banco SQLite acumulado (usado se `db` for None).
+        A IA usa exclusivamente MySQL como banco de conhecimento.
+
         :param threshold: confianca minima para considerar que "sabe" a resposta.
-        :param db: backend ja pronto (ex.: MySQLDatabase). Se informado, tem
-                   prioridade sobre `db_path`. Qualquer objeto que implemente a
-                   mesma interface de `Database` funciona aqui.
+        :param db: instancia de MySQLDatabase ja pronta. Se nao informada, uma
+                   nova conexao e criada com as credenciais padrao (ou as
+                   passadas em `mysql_kwargs` / variaveis de ambiente).
+        :param mysql_kwargs: parametros de conexao opcionais (host, user,
+                   password, database, port) repassados ao MySQLDatabase.
         """
-        self.db = db if db is not None else Database(db_path)
+        self.db = db if db is not None else MySQLDatabase(**mysql_kwargs)
         self.threshold = threshold
 
     # --------------------------------------------------------------- idf

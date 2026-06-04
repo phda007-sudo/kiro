@@ -1,3 +1,3 @@
-# O backend padrao (SQLite) NAO precisa de nada alem da biblioteca padrao.
-# Este pacote so e necessario para usar o backend MySQL (--backend mysql).
+# A IA usa exclusivamente MySQL como banco de conhecimento.
+# PyMySQL e o driver (Python puro) usado para conectar.
 PyMySQL>=1.1

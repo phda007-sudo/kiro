@@ -1,9 +1,3 @@
-# Bancos de dados da IA (conhecimento acumulado em runtime)
-*.db
-*.db-journal
-*.sqlite
-*.sqlite3
-
 # Python
 __pycache__/
 *.py[cod]
@@ -11,3 +5,6 @@ __pycache__/
 venv/
 .mypy_cache/
 .pytest_cache/
+
+# Arquivos locais de ambiente (ex.: credenciais MySQL exportadas)
+.env

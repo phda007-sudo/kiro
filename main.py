@@ -3,8 +3,8 @@
 IA de aprendizado proprio - interface de chat (terminal).
 
 Sem nenhuma API externa. A IA comeca "vazia" e aprende com o que voce
-ensina. Tudo fica salvo em um banco SQLite acumulado (memoria.db por
-padrao), entao o conhecimento persiste entre execucoes.
+ensina. Tudo fica salvo em um banco MySQL acumulado, entao o conhecimento
+persiste entre execucoes e pode ser compartilhado.
 
 Como funciona a conversa:
     - Voce escreve uma pergunta/frase.
@@ -157,34 +157,22 @@ def conversar(brain: Brain, linha: str, ultimo_id: list[int | None]) -> None:
 
 
 def build_brain(args) -> Brain:
-    """Constroi o Brain com o backend escolhido (sqlite ou mysql)."""
-    if args.backend == "mysql":
-        # Import tardio: so exige pymysql quando o MySQL for realmente usado.
-        from ia.db_mysql import MySQLDatabase
+    """Conecta ao MySQL (unico backend) e devolve o Brain."""
+    from ia.db_mysql import MySQLDatabase
 
-        db = MySQLDatabase(
-            host=args.mysql_host,
-            user=args.mysql_user,
-            password=args.mysql_pass,
-            database=args.mysql_db,
-            port=args.mysql_port,
-        )
-        return Brain(threshold=args.threshold, db=db)
-    return Brain(db_path=args.db, threshold=args.threshold)
+    db = MySQLDatabase(
+        host=args.mysql_host,
+        user=args.mysql_user,
+        password=args.mysql_pass,
+        database=args.mysql_db,
+        port=args.mysql_port,
+    )
+    return Brain(threshold=args.threshold, db=db)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="IA de aprendizado proprio (sem APIs externas)."
-    )
-    parser.add_argument(
-        "--backend",
-        choices=["sqlite", "mysql"],
-        default=os.environ.get("IA_BACKEND", "mysql"),
-        help="onde guardar o conhecimento (padrao: mysql)",
-    )
-    parser.add_argument(
-        "--db", default="memoria.db", help="arquivo SQLite (se backend=sqlite)"
+        description="IA de aprendizado proprio (sem APIs externas), com MySQL."
     )
     parser.add_argument(
         "--threshold",
@@ -192,8 +180,8 @@ def main() -> int:
         default=0.30,
         help="confianca minima para responder (0..1, padrao: 0.30)",
     )
-    # Conexao MySQL (valores padrao podem ser sobrescritos por variaveis de
-    # ambiente, evitando deixar credenciais fixas em quem usar o codigo).
+    # Conexao MySQL (unico banco usado pela IA). Os valores padrao podem ser
+    # sobrescritos por variaveis de ambiente, evitando deixar a senha fixa.
     parser.add_argument(
         "--mysql-host",
         default=os.environ.get("IA_MYSQL_HOST", "mysql.50webs.com"),
@@ -217,16 +205,18 @@ def main() -> int:
     try:
         brain = build_brain(args)
     except Exception as e:
-        print(f"[ERRO] Nao consegui conectar ao backend '{args.backend}': {e}")
-        if args.backend == "mysql":
-            print("Dica: rode com --backend sqlite para usar o banco local.")
+        print(f"[ERRO] Nao consegui conectar ao MySQL: {e}")
+        print(
+            "Verifique host/usuario/senha/banco (flags --mysql-* ou variaveis "
+            "de ambiente IA_MYSQL_*)."
+        )
         return 1
 
     ultimo_id: list[int | None] = [None]
 
     print("=" * 60)
     print(" IA de aprendizado proprio  (digite /ajuda para comandos)")
-    print(f" Banco: {brain.stats()['arquivo_banco']}")
+    print(f" Banco: {brain.stats()['banco']}")
     print(f" Itens ja aprendidos: {brain.stats()['itens_aprendidos']}")
     print("=" * 60)
 

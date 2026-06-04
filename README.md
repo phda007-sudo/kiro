@@ -1,22 +1,23 @@
-# IA de Aprendizado Proprio (sem APIs)
+# IA de Aprendizado Proprio (sem APIs, armazenamento em MySQL)
 
-Uma IA conversacional construida **do zero**, em **Python puro** (somente a
-biblioteca padrao). Ela **nao usa nenhuma API externa** nem modelos prontos.
-Toda a "inteligencia" vem de tecnicas classicas de recuperacao de informacao
-implementadas a mao.
+Uma IA conversacional construida **do zero**, em **Python puro**. Ela **nao usa
+nenhuma API externa** nem modelos prontos. Toda a "inteligencia" vem de tecnicas
+classicas de recuperacao de informacao implementadas a mao.
 
 A ideia central:
 
 > A IA comeca "vazia". Voce a ensina. Tudo o que ela aprende e **salvo num
-> banco de dados SQLite acumulado**. Quando voce pergunta algo, ela **busca**
+> banco de dados MySQL acumulado**. Quando voce pergunta algo, ela **busca**
 > nesse banco a resposta mais parecida. Quanto mais voce ensina, mais ela sabe.
+
+O **MySQL e o unico banco** usado pela IA.
 
 ## Como funciona
 
 1. **Processamento de texto** (`ia/text.py`): normaliza a frase (minusculas,
    remove acentos e pontuacao) e quebra em palavras (tokens), descartando
    stopwords em portugues.
-2. **Banco acumulado** (`ia/database.py`): SQLite com um **indice invertido**
+2. **Banco acumulado** (`ia/db_mysql.py`): MySQL com um **indice invertido**
    (`token -> documentos`). Guarda cada conhecimento, o vocabulario e contadores
    de uso/reforco. E aqui que a IA "busca e salva".
 3. **Cerebro** (`ia/brain.py`): representa cada frase como um vetor **TF-IDF** e
@@ -24,41 +25,35 @@ A ideia central:
    cosseno**. Se a confianca passa de um limiar, responde; senao, pede para
    aprender.
 
-Nenhum servico de rede e chamado em momento algum.
+Nenhum servico de rede e chamado, exceto a conexao com o seu proprio MySQL.
 
 ## Estrutura
 
 ```
 ia/
-  __init__.py     # exporta Brain e Database
+  __init__.py     # exporta Brain e MySQLDatabase
   text.py         # normalizacao e tokenizacao
-  database.py     # backend SQLite (indice invertido + vocabulario)
-  db_mysql.py     # backend MySQL (mesma interface, via PyMySQL)
+  db_mysql.py     # banco MySQL (indice invertido + vocabulario) - unico backend
   brain.py        # TF-IDF + cosseno: aprende, busca e responde
-main.py           # interface de chat no terminal (escolhe o backend)
-requirements.txt  # PyMySQL (so para o backend MySQL)
-memoria.db        # criado automaticamente no backend SQLite
+main.py           # interface de chat no terminal
+requirements.txt  # PyMySQL (driver MySQL)
 ```
+
+As tabelas (`knowledge`, `vocab`, `postings`, `meta`) sao criadas
+automaticamente na primeira execucao.
 
 ## Como usar
 
-Requisitos: Python 3.9+.
-
-- Backend **SQLite** (padrao historico): nao precisa instalar nada.
-- Backend **MySQL**: precisa do driver `PyMySQL`:
+Requisitos: Python 3.9+ e um banco MySQL.
 
 ```bash
 pip install -r requirements.txt
+python3 main.py
 ```
 
-### Rodando
-
-Por padrao agora a IA usa **MySQL** (configurado para o banco do projeto):
-
-```bash
-python3 main.py                 # usa MySQL (mysql.50webs.com / intart_1)
-python3 main.py --backend sqlite  # usa um arquivo local memoria.db
-```
+Por padrao conecta no MySQL do projeto:
+`mysql.50webs.com / banco intart_1`. Para usar outro banco, passe as flags ou
+defina variaveis de ambiente (veja abaixo).
 
 Exemplo de conversa:
 
@@ -90,73 +85,55 @@ vez, ja responde sozinha (inclusive para variacoes da pergunta).
 | `/ajuda` | mostra a ajuda |
 | `/sair` | encerra |
 
-### Opcoes de linha de comando
+### Conexao MySQL
+
+Flags da linha de comando:
 
 ```bash
-# SQLite local
-python3 main.py --backend sqlite --db meu_cerebro.db --threshold 0.25
-
-# MySQL (host/usuario/senha/banco podem vir por flag ou variavel de ambiente)
-python3 main.py --backend mysql \
+python3 main.py \
   --mysql-host mysql.50webs.com --mysql-user intart_1 \
-  --mysql-pass intart_1 --mysql-db intart_1
+  --mysql-pass intart_1 --mysql-db intart_1 --mysql-port 3306 \
+  --threshold 0.30
 ```
 
-- `--backend`: `sqlite` ou `mysql` (padrao: `mysql`).
-- `--db`: arquivo SQLite (quando `--backend sqlite`).
+Ou por variaveis de ambiente (recomendado para nao expor a senha):
+
+```bash
+export IA_MYSQL_HOST=mysql.50webs.com
+export IA_MYSQL_USER=intart_1
+export IA_MYSQL_PASS=intart_1
+export IA_MYSQL_DB=intart_1
+export IA_MYSQL_PORT=3306
+python3 main.py
+```
+
 - `--threshold`: confianca minima (0 a 1) para a IA responder em vez de
   perguntar. Mais baixo = responde mais (e arrisca mais); mais alto = so
   responde quando tem certeza.
-- `--mysql-host/-user/-pass/-db/-port`: conexao MySQL. Tambem podem ser
-  definidos por variaveis de ambiente: `IA_MYSQL_HOST`, `IA_MYSQL_USER`,
-  `IA_MYSQL_PASS`, `IA_MYSQL_DB`, `IA_MYSQL_PORT` e `IA_BACKEND`.
-
-> Dica de seguranca: prefira passar a senha por variavel de ambiente
-> (`export IA_MYSQL_PASS=...`) em vez de deixa-la no comando/historico.
-
-## Backends de armazenamento
-
-A logica de aprendizado e a mesma; muda so onde o conhecimento e guardado:
-
-| Backend | Arquivo | Quando usar |
-|---|---|---|
-| SQLite (`ia/database.py`) | `memoria.db` local | offline, sem dependencias |
-| MySQL (`ia/db_mysql.py`) | servidor MySQL | conhecimento compartilhado/remoto |
-
-Os dois implementam a mesma interface, entao o `Brain` funciona com qualquer
-um. Para usar MySQL como biblioteca:
-
-```python
-from ia import Brain
-from ia.db_mysql import MySQLDatabase
-
-db = MySQLDatabase(host="mysql.50webs.com", user="intart_1",
-                   password="intart_1", database="intart_1")
-ia = Brain(db=db)
-ia.learn("quem criou o python", "Guido van Rossum")
-print(ia.respond("quem inventou o python?")[0])
-ia.close()
-```
 
 ## Usando como biblioteca
 
 ```python
 from ia import Brain
 
-ia = Brain(db_path="memoria.db")
+# Conecta ao MySQL com as credenciais padrao (ou variaveis de ambiente):
+ia = Brain()
+
+# Ou informando a conexao explicitamente:
+# ia = Brain(host="mysql.50webs.com", user="intart_1",
+#            password="intart_1", database="intart_1")
+
 ia.learn("quem criou o python", "Guido van Rossum")
-
 resposta, match = ia.respond("quem inventou o python?")
-print(resposta)  # Guido van Rossum
+print(resposta)          # Guido van Rossum
 print(match.confidence)  # confianca da resposta
-
 ia.close()
 ```
 
 ## Limitacoes (e proximos passos possiveis)
 
 - E uma IA de **recuperacao** (encontra a melhor resposta ja aprendida), nao
-  uma que **gera** texto novo. Isso a torna leve, transparente e 100% offline.
+  uma que **gera** texto novo. Isso a torna leve e transparente.
 - Ideias de evolucao: gerar respostas com cadeias de Markov a partir do que
   aprendeu, suporte a sinonimos, e correcao de erros de digitacao (distancia
   de edicao) na busca.
