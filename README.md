@@ -34,12 +34,14 @@ ia/
   __init__.py     # exporta Brain e MySQLDatabase
   text.py         # normalizacao e tokenizacao
   db_mysql.py     # banco MySQL (indice invertido + vocabulario) - unico backend
-  brain.py        # TF-IDF + cosseno: aprende, busca e responde
+  files.py        # extracao e analise de arquivos (txt, pdf, docx, xlsx, ...)
+  brain.py        # TF-IDF + cosseno: aprende, busca, responde e absorve arquivos
 main.py           # interface de chat no terminal
-requirements.txt  # PyMySQL (driver MySQL)
+web.py            # interface WEB (chat + botao de upload + alimentar por IA)
+requirements.txt  # PyMySQL, Flask e extratores de arquivos
 ```
 
-As tabelas (`knowledge`, `vocab`, `postings`, `meta`) sao criadas
+As tabelas (`knowledge`, `vocab`, `postings`, `documents`, `meta`) sao criadas
 automaticamente na primeira execucao.
 
 ## Como usar
@@ -111,6 +113,55 @@ python3 main.py
   perguntar. Mais baixo = responde mais (e arrisca mais); mais alto = so
   responde quando tem certeza.
 
+## Interface WEB (upload de arquivos e alimentacao por outras IAs)
+
+Alem do terminal, ha uma interface no navegador:
+
+```bash
+pip install -r requirements.txt
+python3 web.py          # abre em http://127.0.0.1:5000
+```
+
+A pagina tem tres partes:
+
+1. **Conversar** — chat com a IA. Se ela nao souber, pergunta a resposta certa
+   e aprende na hora.
+2. **Enviar arquivo para analise** — um **botao** que abre o seletor de
+   arquivos do sistema (a "telinha"). Voce escolhe o arquivo, a IA **analisa**
+   (palavras-chave + resumo) e **absorve** o conteudo para o banco, ficando
+   pesquisavel. Formatos suportados:
+   - Texto/codigo: `txt, md, csv, tsv, json, xml, html, yaml, ini, py, js,
+     java, c, cpp, go, rb, php, sql, sh, ...`
+   - Binarios (via extratores opcionais): `pdf` (pdfminer.six / PyPDF2),
+     `docx` (python-docx), `xlsx` (openpyxl). Se a biblioteca nao estiver
+     instalada, a IA avisa em vez de quebrar.
+3. **Alimentar com info de outra IA** — cole o que **outra inteligencia
+   artificial** produziu sobre um determinado arquivo (informe o nome da IA e
+   o arquivo). A IA guarda esse conteudo marcado com a origem `ia:<nome>` e
+   passa a usa-lo nas respostas.
+
+Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
+"Documentos absorvidos".
+
+### Endpoints (caso queira integrar)
+
+| Metodo | Rota | Funcao |
+|---|---|---|
+| POST | `/api/ask` | `{pergunta}` -> resposta + confianca |
+| POST | `/api/ensinar` | `{pergunta, resposta}` -> aprende |
+| POST | `/api/upload` | arquivo (multipart) -> analisa e absorve |
+| POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info de outra IA |
+| GET | `/api/stats` | estatisticas do banco |
+| GET | `/api/documentos` | lista de documentos absorvidos |
+
+### Os mesmos recursos pelo terminal
+
+```
+voce> /analisar /caminho/para/relatorio.pdf   # analisa e absorve um arquivo
+voce> /documentos                             # lista os arquivos absorvidos
+voce> resumo do arquivo relatorio.pdf         # pergunta sobre o que absorveu
+```
+
 ## Usando como biblioteca
 
 ```python
@@ -127,8 +178,31 @@ ia.learn("quem criou o python", "Guido van Rossum")
 resposta, match = ia.respond("quem inventou o python?")
 print(resposta)          # Guido van Rossum
 print(match.confidence)  # confianca da resposta
+
+# Analisar/absorver um arquivo:
+with open("relatorio.pdf", "rb") as f:
+    info = ia.ingest_document("relatorio.pdf", f.read())
+print(info["resumo"], info["trechos_indexados"])
+
+# Alimentar com info de outra IA sobre um arquivo:
+ia.feed_from_ai("relatorio.pdf", "Resumo produzido por outra IA...", ai_name="GPT")
+
 ia.close()
 ```
+
+## Comandos do terminal (lista completa)
+
+| Comando | O que faz |
+|---|---|
+| `/ensinar` / `/ensinar P \| R` | ensina um par pergunta/resposta |
+| `/buscar texto` | mostra os itens mais parecidos |
+| `/analisar <caminho>` | le um arquivo do disco, analisa e absorve |
+| `/documentos` | lista os arquivos absorvidos |
+| `/esquecer <id>` | remove um item de conhecimento |
+| `/bom` | reforca a ultima resposta dada |
+| `/stats` / `/listar` | estatisticas / lista tudo |
+| `/web` | dica para abrir a interface web |
+| `/ajuda` / `/sair` | ajuda / encerra |
 
 ## Limitacoes (e proximos passos possiveis)
 

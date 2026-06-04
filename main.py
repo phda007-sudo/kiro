@@ -16,10 +16,13 @@ Comandos especiais (comecam com "/"):
     /ensinar              -> ensina um par pergunta|resposta de forma guiada
     /ensinar P | R        -> ensina direto: "P" vira pergunta e "R" a resposta
     /buscar texto         -> mostra os itens mais parecidos com pontuacao
+    /analisar <caminho>   -> le um arquivo do disco, analisa e absorve para a IA
+    /documentos           -> lista os arquivos ja absorvidos
     /esquecer <id>        -> remove um item de conhecimento pelo id
     /bom                  -> reforca (feedback positivo) a ultima resposta dada
     /stats                -> mostra estatisticas do banco
     /listar               -> lista tudo o que foi aprendido
+    /web                  -> dica de como abrir a interface web (upload/analise)
     /ajuda                -> mostra esta ajuda
     /sair                 -> encerra
 """
@@ -89,6 +92,40 @@ def comando(brain: Brain, linha: str, ultimo_id: list[int | None]) -> bool:
                     f"  [id={m.knowledge_id}] conf={m.confidence:.2f} "
                     f"sim={m.similarity:.2f} | {m.pattern!r} -> {m.response!r}"
                 )
+
+    elif cmd == "/analisar":
+        if not arg:
+            print("  Use: /analisar <caminho-do-arquivo>")
+        elif not os.path.isfile(arg):
+            print(f"  Arquivo nao encontrado: {arg}")
+        else:
+            with open(arg, "rb") as fh:
+                data = fh.read()
+            nome = os.path.basename(arg)
+            r = brain.ingest_document(nome, data, source="upload")
+            print(f"  Analisado: {r['arquivo']} (tipo: {r.get('nota')})")
+            print(f"  Trechos absorvidos: {r['trechos_indexados']}")
+            if r.get("resumo"):
+                print(f"  Resumo: {r['resumo']}")
+            chaves = ", ".join(
+                k["palavra"] for k in r.get("palavras_chave", [])[:8]
+            )
+            if chaves:
+                print(f"  Palavras-chave: {chaves}")
+
+    elif cmd == "/documentos":
+        docs = brain.documents()
+        if not docs:
+            print("  Nenhum documento absorvido ainda. Use /analisar <arquivo>.")
+        for d in docs:
+            print(
+                f"  [id={d['id']}] {d['filename']} | origem={d['source']} | "
+                f"trechos={d['chunks']}"
+            )
+
+    elif cmd == "/web":
+        print("  Para a interface com botao de upload, rode:  python3 web.py")
+        print("  e abra http://127.0.0.1:5000 no navegador.")
 
     elif cmd == "/esquecer":
         if not arg.isdigit():

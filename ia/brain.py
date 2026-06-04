@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from . import text
+from . import files, text
 from .db_mysql import MySQLDatabase
 
 
@@ -168,6 +168,120 @@ class Brain:
 
     def forget(self, knowledge_id: int) -> bool:
         return self.db.forget(knowledge_id)
+
+    # --------------------------------------------------------- arquivos
+    def ingest_document(
+        self, filename: str, data: bytes, source: str = "upload"
+    ) -> dict:
+        """
+        Analisa um arquivo e ABSORVE seu conteudo para o banco.
+
+        Cada trecho do arquivo vira um item pesquisavel (indexado por TF-IDF),
+        e sao criados itens de "resumo" para perguntas do tipo
+        "resumo do arquivo X". Devolve a analise (palavras-chave + resumo).
+        """
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        conteudo, nota = files.extract_text(data, filename)
+        tamanho = len(data)
+
+        if not conteudo.strip():
+            doc_id = self.db.add_document(filename, ext, tamanho, 0, source, "")
+            return {
+                "arquivo": filename,
+                "ext": ext,
+                "tamanho_bytes": tamanho,
+                "trechos_indexados": 0,
+                "nota": nota or "nao foi possivel extrair texto",
+                "resumo": "",
+                "palavras_chave": [],
+                "doc_id": doc_id,
+            }
+
+        analise = files.analyze(conteudo)
+        resumo = analise["resumo"]
+        trechos = files.chunk_text(conteudo)
+        src = f"{source}:{filename}"
+
+        ids = self.db.add_knowledge_bulk([(t, t) for t in trechos], source=src)
+
+        # Itens dedicados de resumo (varias formas de perguntar).
+        resumo_resp = resumo or "(arquivo sem texto suficiente para resumo)"
+        self.db.add_knowledge_bulk(
+            [
+                (f"resumo do arquivo {filename}", resumo_resp),
+                (f"sobre o arquivo {filename}", resumo_resp),
+                (f"o que tem no arquivo {filename}", resumo_resp),
+            ],
+            source=src,
+        )
+
+        doc_id = self.db.add_document(
+            filename, ext, tamanho, len(trechos), source, resumo
+        )
+
+        return {
+            "arquivo": filename,
+            "ext": ext,
+            "tamanho_bytes": tamanho,
+            "trechos_indexados": len(ids),
+            "nota": nota,
+            "resumo": resumo,
+            "palavras_chave": analise["palavras_chave"],
+            "estatisticas": {
+                "caracteres": analise["caracteres"],
+                "linhas": analise["linhas"],
+                "palavras": analise["palavras"],
+                "palavras_unicas": analise["palavras_unicas"],
+            },
+            "doc_id": doc_id,
+        }
+
+    def feed_from_ai(
+        self, filename: str, content: str, ai_name: str = "ia-externa"
+    ) -> dict:
+        """
+        Alimenta a IA com informacoes produzidas por OUTRA inteligencia
+        artificial sobre um determinado arquivo.
+
+        O conteudo e indexado como conhecimento (marcado com a origem
+        'ia:<nome>'), ficando disponivel nas buscas e associado ao arquivo.
+        """
+        content = (content or "").strip()
+        if not content:
+            raise ValueError("O conteudo fornecido pela IA esta vazio.")
+        if not filename.strip():
+            filename = "(sem nome)"
+
+        src = f"ia:{ai_name}"
+        analise = files.analyze(content)
+        resumo = analise["resumo"]
+        trechos = files.chunk_text(content)
+
+        ids = self.db.add_knowledge_bulk([(t, t) for t in trechos], source=src)
+        resumo_resp = resumo or content[:500]
+        self.db.add_knowledge_bulk(
+            [
+                (f"o que a {ai_name} disse sobre {filename}", resumo_resp),
+                (f"informacoes sobre {filename}", resumo_resp),
+            ],
+            source=src,
+        )
+
+        doc_id = self.db.add_document(
+            filename, "", len(content.encode("utf-8")), len(trechos), src, resumo
+        )
+
+        return {
+            "arquivo": filename,
+            "ia": ai_name,
+            "trechos_indexados": len(ids),
+            "resumo": resumo,
+            "palavras_chave": analise["palavras_chave"],
+            "doc_id": doc_id,
+        }
+
+    def documents(self) -> list[dict]:
+        return self.db.list_documents()
 
     def stats(self) -> dict:
         return self.db.stats()
