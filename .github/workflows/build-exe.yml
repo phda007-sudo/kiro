@@ -1,11 +1,16 @@
 name: Build Windows EXE
 
-# Gera o intart-ia.exe num runner Windows.
-# - Rode manualmente em Actions (workflow_dispatch) para baixar o .exe como artifact.
-# - Crie uma tag "v*" (ex.: v1.0.0) para publicar uma Release com o .exe (link direto permanente).
+# Gera o intart-ia.exe num runner Windows e publica como Release (link direto).
+# Dispara:
+#   - automaticamente a cada push neste branch (atualiza a release "windows-build");
+#   - ao criar uma tag "v*" (publica tambem uma release versionada);
+#   - manualmente pela aba Actions (Run workflow).
 on:
   workflow_dispatch:
   push:
+    branches:
+      - "feat/ia-aprendizado-mysql"
+      - "main"
     tags:
       - "v*"
 
@@ -39,8 +44,16 @@ jobs:
           name: intart-ia-windows
           path: dist/intart-ia.exe
 
-      - name: Publicar Release (quando for uma tag v*)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publicar Release com link direto (tag fixa "windows-build")
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-build
+          name: "intart-ia (Windows) - build mais recente"
+          body: "Executavel da IA para Windows, gerado automaticamente. Baixe o intart-ia.exe abaixo."
+          files: dist/intart-ia.exe
+
+      - name: Publicar Release versionada (quando for uma tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/intart-ia.exe
