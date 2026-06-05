@@ -71,7 +71,7 @@ def _render_md(subject: str, sections: list[str]) -> bytes:
             out.append(f"- {s}")
     else:
         out.append("> A IA ainda nao tem conhecimento sobre este assunto.")
-    out += ["", "---", f"_Gerado pela IA de aprendizado proprio em {time.strftime('%d/%m/%Y %H:%M')}_"]
+    out += ["", "---", f"_Gerado pela PHDA CEREBROZ em {time.strftime('%d/%m/%Y %H:%M')}_"]
     return ("\n".join(out) + "\n").encode("utf-8")
 
 
@@ -85,7 +85,7 @@ def _render_html(subject: str, sections: list[str]) -> bytes:
         "<!doctype html><html lang=pt-br><head><meta charset=utf-8>"
         f"<title>{esc(subject)}</title></head><body>"
         f"<h1>{esc(subject)}</h1><ul>{itens}</ul>"
-        f"<hr><small>Gerado pela IA em {time.strftime('%d/%m/%Y %H:%M')}</small>"
+        f"<hr><small>Gerado pela PHDA CEREBROZ em {time.strftime('%d/%m/%Y %H:%M')}</small>"
         "</body></html>"
     )
     return html.encode("utf-8")
@@ -120,7 +120,7 @@ def _render_py(subject: str, sections: list[str]) -> bytes:
     content = (
         '"""\n'
         f"Assunto: {subject}\n"
-        "Gerado automaticamente pela IA de aprendizado proprio "
+        "Gerado automaticamente pela PHDA CEREBROZ "
         "(a partir do conhecimento acumulado).\n"
         '"""\n\n'
         f"ASSUNTO = {subject!r}\n\n"
@@ -134,7 +134,7 @@ def _render_py(subject: str, sections: list[str]) -> bytes:
 
 def _render_code(subject: str, sections: list[str], token: str) -> bytes:
     out = [f"{token} === {subject} ===",
-           f"{token} Gerado pela IA de aprendizado proprio."]
+           f"{token} Gerado pela PHDA CEREBROZ."]
     corpo = sections if sections else ["(sem conhecimento sobre o assunto ainda)"]
     for s in corpo:
         for linha in s.splitlines() or [s]:
@@ -160,7 +160,7 @@ def _render_pdf(subject: str, sections: list[str]) -> bytes:
         pdf.multi_cell(0, 7, _latin(s))
         pdf.ln(2)
     pdf.set_font("Helvetica", "I", 9)
-    pdf.multi_cell(0, 6, _latin(f"Gerado pela IA em {time.strftime('%d/%m/%Y %H:%M')}"))
+    pdf.multi_cell(0, 6, _latin(f"Gerado pela PHDA CEREBROZ em {time.strftime('%d/%m/%Y %H:%M')}"))
     return bytes(pdf.output())
 
 

@@ -1,5 +1,5 @@
 """
-IA de aprendizado proprio (sem APIs externas), com armazenamento em MySQL.
+PHDA CEREBROZ - IA de aprendizado proprio (conhecimento no MySQL, arquivos no FTPS).
 
 Pacote com os modulos:
     - text:     processamento de texto (normalizacao, tokenizacao)

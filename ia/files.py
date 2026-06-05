@@ -95,6 +95,18 @@ def _extract_xlsx(data: bytes) -> tuple[str, str]:
         return "", f"falha ao ler XLSX: {e}"
 
 
+def _looks_binary(data: bytes) -> bool:
+    """Heuristica: detecta arquivos binarios (imagens, zip, etc.)."""
+    amostra = data[:8192]
+    if not amostra:
+        return False
+    if b"\x00" in amostra:  # byte nulo => quase certamente binario
+        return True
+    # proporcao de bytes de controle "estranhos" (fora de texto comum)
+    estranhos = sum(1 for x in amostra if x < 9 or (13 < x < 32))
+    return estranhos / len(amostra) > 0.1
+
+
 def extract_text(data: bytes, filename: str) -> tuple[str, str]:
     """
     Extrai texto dos bytes de um arquivo.
@@ -119,14 +131,16 @@ def extract_text(data: bytes, filename: str) -> tuple[str, str]:
         except Exception:  # noqa: BLE001
             return raw, "json (texto bruto)"
 
-    if ext in TEXT_EXTS or ext == "":
+    if ext in TEXT_EXTS:
         return _decode(data), (ext or "texto")
 
-    # Extensao desconhecida: tenta decodificar; se vier muito "lixo", e binario.
+    # Extensao desconhecida ou sem extensao: detecta binario pelos bytes.
+    if _looks_binary(data):
+        return "", f"arquivo '{ext or 'binario'}' guardado (sem texto extraivel)"
     decoded = _decode(data)
     if not decoded or decoded.count("\ufffd") > max(10, len(decoded) * 0.1):
         return "", f"formato '{ext}' nao suportado (binario)"
-    return decoded, ext
+    return decoded, (ext or "texto")
 
 
 # --------------------------------------------------------------- analise

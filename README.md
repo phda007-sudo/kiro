@@ -1,8 +1,11 @@
-# IA de Aprendizado Proprio (armazenamento em MySQL)
+# PHDA CEREBROZ (conhecimento no MySQL, arquivos no FTPS)
 
 Uma IA conversacional construida **do zero**, em **Python puro**. Por padrao ela
 **nao usa nenhuma API externa** nem modelos prontos: toda a "inteligencia" vem
 de tecnicas classicas de recuperacao de informacao implementadas a mao.
+
+O **conhecimento** (texto/trechos) fica num banco **MySQL** acumulado; os
+**arquivos** originais (de qualquer tipo) sao guardados num servidor **FTPS**.
 
 Opcionalmente, voce pode cadastrar **IAs externas** (OpenAI, Anthropic, Gemini
 ou qualquer endpoint compativel) para serem consultadas **so quando a IA local
@@ -29,7 +32,9 @@ O **MySQL e o unico banco** usado pela IA.
    cosseno**. Se a confianca passa de um limiar, responde; senao, pede para
    aprender.
 
-Nenhum servico de rede e chamado, exceto a conexao com o seu proprio MySQL.
+Nenhum servico de rede e chamado por padrao, exceto o seu proprio MySQL (para o
+conhecimento) e o seu FTPS (para guardar os arquivos). IAs externas so sao
+chamadas se voce as cadastrar.
 
 ## Estrutura
 
@@ -37,16 +42,21 @@ Nenhum servico de rede e chamado, exceto a conexao com o seu proprio MySQL.
 ia/
   __init__.py     # exporta Brain e MySQLDatabase
   text.py         # normalizacao e tokenizacao
-  db_mysql.py     # banco MySQL (indice invertido + vocabulario) - unico backend
+  db_mysql.py     # banco MySQL (conhecimento: indice invertido + vocabulario)
+  storage.py      # armazenamento dos arquivos em servidor FTPS
   files.py        # extracao e analise de arquivos (txt, pdf, docx, xlsx, ...)
-  brain.py        # TF-IDF + cosseno: aprende, busca, responde e absorve arquivos
-main.py           # interface de chat no terminal
-web.py            # interface WEB (chat + botao de upload + alimentar por IA)
-requirements.txt  # PyMySQL, Flask e extratores de arquivos
+  generate.py     # gera arquivos (pdf, py, md, docx, ...) sobre um assunto
+  providers.py    # consulta a IAs externas (OpenAI/Anthropic/Gemini/custom)
+  brain.py        # TF-IDF + cosseno: aprende, busca, responde, gera e absorve
+main.py           # PHDA CEREBROZ - interface de chat no terminal
+web.py            # PHDA CEREBROZ - interface WEB (upload, gerar, IAs externas)
+launcher.py       # ponto de entrada do executavel (.exe)
+requirements.txt  # PyMySQL, Flask, extratores e fpdf2
 ```
 
-As tabelas (`knowledge`, `vocab`, `postings`, `documents`, `meta`) sao criadas
-automaticamente na primeira execucao.
+As tabelas (`knowledge`, `vocab`, `postings`, `documents`, `ai_providers`,
+`meta`) sao criadas automaticamente. O conhecimento vai para o MySQL; os
+arquivos originais vao para o FTPS (a tabela `documents` guarda o caminho).
 
 ## Como usar
 
@@ -112,6 +122,22 @@ export IA_MYSQL_DB=intart_1
 export IA_MYSQL_PORT=3306
 python3 main.py
 ```
+
+### Armazenamento dos arquivos (FTPS)
+
+Os arquivos enviados/gerados sao guardados num servidor **FTPS**. Por padrao usa
+`ftps2.50webs.com` (user `intart`), na pasta `phda_cerebroz/`. Pode trocar por
+variaveis de ambiente:
+
+```bash
+export IA_FTPS_HOST=ftps2.50webs.com
+export IA_FTPS_USER=intart
+export IA_FTPS_PASS=intart
+export IA_FTPS_DIR=phda_cerebroz
+```
+
+Se o FTPS estiver indisponivel, a IA continua funcionando (apenas nao guarda o
+arquivo bruto) — o conhecimento extraido ainda vai para o MySQL.
 
 - `--threshold`: confianca minima (0 a 1) para a IA responder em vez de
   perguntar. Mais baixo = responde mais (e arrisca mais); mais alto = so
@@ -180,6 +206,7 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 | POST | `/api/provedores/<id>/testar` | testa a conexao com a IA externa |
 | GET | `/api/stats` | estatisticas do banco |
 | GET | `/api/documentos` | lista de documentos absorvidos |
+| GET | `/api/documentos/<id>/baixar` | baixa o arquivo original guardado no FTPS |
 
 ### Os mesmos recursos pelo terminal
 

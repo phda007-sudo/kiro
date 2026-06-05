@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from . import files, generate, providers, text
+from . import files, generate, providers, storage, text
 from .db_mysql import MySQLDatabase
 
 
@@ -46,19 +46,22 @@ class Brain:
         self,
         threshold: float = 0.30,
         db: MySQLDatabase | None = None,
+        ftps: "storage.FtpsStorage | None" = None,
         **mysql_kwargs,
     ):
         """
-        A IA usa exclusivamente MySQL como banco de conhecimento.
+        A IA usa MySQL para o conhecimento e FTPS para guardar os arquivos.
 
         :param threshold: confianca minima para considerar que "sabe" a resposta.
         :param db: instancia de MySQLDatabase ja pronta. Se nao informada, uma
                    nova conexao e criada com as credenciais padrao (ou as
                    passadas em `mysql_kwargs` / variaveis de ambiente).
+        :param ftps: armazenamento FTPS dos arquivos. Se None, usa o padrao.
         :param mysql_kwargs: parametros de conexao opcionais (host, user,
                    password, database, port) repassados ao MySQLDatabase.
         """
         self.db = db if db is not None else MySQLDatabase(**mysql_kwargs)
+        self.storage = ftps if ftps is not None else storage.FtpsStorage()
         self.threshold = threshold
 
     # --------------------------------------------------------------- idf
@@ -310,8 +313,13 @@ class Brain:
         conteudo, nota = files.extract_text(data, filename)
         tamanho = len(data)
 
+        # Guarda o arquivo BRUTO no FTPS (qualquer tipo de arquivo).
+        remote_path = self.storage.store(filename, data) or ""
+
         if not conteudo.strip():
-            doc_id = self.db.add_document(filename, ext, tamanho, 0, source, "")
+            doc_id = self.db.add_document(
+                filename, ext, tamanho, 0, source, "", remote_path
+            )
             return {
                 "arquivo": filename,
                 "ext": ext,
@@ -321,6 +329,7 @@ class Brain:
                 "resumo": "",
                 "palavras_chave": [],
                 "doc_id": doc_id,
+                "ftps": bool(remote_path),
             }
 
         analise = files.analyze(conteudo)
@@ -342,7 +351,7 @@ class Brain:
         )
 
         doc_id = self.db.add_document(
-            filename, ext, tamanho, len(trechos), source, resumo
+            filename, ext, tamanho, len(trechos), source, resumo, remote_path
         )
 
         return {
@@ -360,6 +369,7 @@ class Brain:
                 "palavras_unicas": analise["palavras_unicas"],
             },
             "doc_id": doc_id,
+            "ftps": bool(remote_path),
         }
 
     def feed_from_ai(
@@ -383,6 +393,12 @@ class Brain:
         resumo = analise["resumo"]
         trechos = files.chunk_text(content)
 
+        # Guarda a carga de informacao como arquivo .txt no FTPS.
+        nome_arq = filename if filename != "(sem nome)" else f"{ai_name}_info"
+        remote_path = self.storage.store(
+            f"{generate.slugify(nome_arq)}.txt", content.encode("utf-8")
+        ) or ""
+
         ids = self.db.add_knowledge_bulk([(t, t) for t in trechos], source=src)
         resumo_resp = resumo or content[:500]
         self.db.add_knowledge_bulk(
@@ -394,7 +410,8 @@ class Brain:
         )
 
         doc_id = self.db.add_document(
-            filename, "", len(content.encode("utf-8")), len(trechos), src, resumo
+            filename, "", len(content.encode("utf-8")), len(trechos), src,
+            resumo, remote_path
         )
 
         return {
@@ -404,6 +421,7 @@ class Brain:
             "resumo": resumo,
             "palavras_chave": analise["palavras_chave"],
             "doc_id": doc_id,
+            "ftps": bool(remote_path),
         }
 
     def documents(self) -> list[dict]:
@@ -437,7 +455,23 @@ class Brain:
         if not subject:
             raise ValueError("Informe o assunto a ser gerado.")
         sections = self.compose(subject, max_items=max_items)
-        return generate.render(subject, sections, ext)
+        filename, blob, mime = generate.render(subject, sections, ext)
+        # Guarda tambem o arquivo gerado no FTPS (best-effort).
+        try:
+            self.storage.store(filename, blob)
+        except Exception:  # noqa: BLE001
+            pass
+        return filename, blob, mime
+
+    def download_document(self, doc_id: int) -> tuple[str, bytes] | None:
+        """Recupera do FTPS o arquivo bruto de um documento absorvido."""
+        doc = self.db.get_document(doc_id)
+        if not doc or not doc.get("remote_path"):
+            return None
+        data = self.storage.retrieve(doc["remote_path"])
+        if data is None:
+            return None
+        return doc["filename"], data
 
     def stats(self) -> dict:
         return self.db.stats()

@@ -79,6 +79,7 @@ SCHEMA = [
         chunks     INT NOT NULL DEFAULT 0,
         source     VARCHAR(255) NOT NULL DEFAULT 'upload',
         summary    MEDIUMTEXT,
+        remote_path VARCHAR(512) NOT NULL DEFAULT '',
         created_at DOUBLE NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
@@ -169,7 +170,7 @@ class MySQLDatabase:
         `pattern_hash` (permite trechos longos de arquivos) e tem coluna
         `source`. Idempotente via meta.schema_version.
         """
-        if self._get_meta_int("schema_version", 0) >= 2:
+        if self._get_meta_int("schema_version", 0) >= 3:
             return
 
         if not self._column_exists("knowledge", "source"):
@@ -198,8 +199,15 @@ class MySQLDatabase:
         # Garante espaco para respostas grandes (resumos / trechos).
         self._exec("ALTER TABLE knowledge MODIFY response MEDIUMTEXT NOT NULL")
 
+        # v3: caminho do arquivo no FTPS.
+        if not self._column_exists("documents", "remote_path"):
+            self._exec(
+                "ALTER TABLE documents ADD COLUMN remote_path VARCHAR(512) "
+                "NOT NULL DEFAULT ''"
+            )
+
         with self._cursor() as cur:
-            self._set_meta_int(cur, "schema_version", 2)
+            self._set_meta_int(cur, "schema_version", 3)
         self.conn.commit()
 
     def _query_all(self, sql: str, params: tuple = ()) -> list[dict]:
@@ -309,16 +317,22 @@ class MySQLDatabase:
         chunks: int,
         source: str,
         summary: str,
+        remote_path: str = "",
     ) -> int:
         with self._cursor() as cur:
             cur.execute(
                 "INSERT INTO documents(filename, ext, size_bytes, chunks, "
-                "source, summary, created_at) VALUES(%s, %s, %s, %s, %s, %s, %s)",
-                (filename, ext, size_bytes, chunks, source, summary, time.time()),
+                "source, summary, remote_path, created_at) "
+                "VALUES(%s, %s, %s, %s, %s, %s, %s, %s)",
+                (filename, ext, size_bytes, chunks, source, summary,
+                 remote_path, time.time()),
             )
             doc_id = cur.lastrowid
         self.conn.commit()
         return doc_id
+
+    def get_document(self, doc_id: int) -> dict | None:
+        return self._query_one("SELECT * FROM documents WHERE id = %s", (doc_id,))
 
     def list_documents(self) -> list[dict]:
         return self._query_all("SELECT * FROM documents ORDER BY id DESC")

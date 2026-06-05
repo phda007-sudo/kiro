@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-IA de aprendizado proprio - interface de chat (terminal).
+PHDA CEREBROZ - interface de chat (terminal).
 
 Sem nenhuma API externa. A IA comeca "vazia" e aprende com o que voce
 ensina. Tudo fica salvo em um banco MySQL acumulado, entao o conhecimento
@@ -240,7 +240,7 @@ def build_brain(args) -> Brain:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="IA de aprendizado proprio (sem APIs externas), com MySQL."
+        description="PHDA CEREBROZ (conhecimento no MySQL, arquivos no FTPS)."
     )
     parser.add_argument(
         "--threshold",
@@ -288,7 +288,7 @@ def main() -> int:
     ultimo_id: list[int | None] = [None]
 
     print("=" * 60)
-    print(" IA de aprendizado proprio  (digite /ajuda para comandos)")
+    print(" PHDA CEREBROZ  (digite /ajuda para comandos)")
     print(f" Banco: {brain.stats()['banco']}")
     print(f" Itens ja aprendidos: {brain.stats()['itens_aprendidos']}")
     print("=" * 60)

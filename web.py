@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interface WEB da IA de aprendizado proprio (armazenamento em MySQL).
+Interface WEB da PHDA CEREBROZ (conhecimento no MySQL, arquivos no FTPS).
 
 Sobe um servidor local com:
     - um chat para conversar/ensinar a IA;
@@ -52,7 +52,7 @@ INDEX_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>IA de Aprendizado Proprio</title>
+<title>PHDA CEREBROZ</title>
 <style>
   :root { --bg:#0f1320; --panel:#1a2032; --line:#2a3350; --txt:#e6e9f2;
           --muted:#9aa3bd; --accent:#5b8cff; --ok:#36c08a; --warn:#e0a44b; }
@@ -99,7 +99,7 @@ INDEX_HTML = """<!doctype html>
 </head>
 <body>
 <header>
-  <h1>🧠 IA de Aprendizado Proprio</h1>
+  <h1>🧠 PHDA CEREBROZ</h1>
   <span class="stats" id="stats">carregando...</span>
 </header>
 
@@ -236,17 +236,21 @@ async function carregarStats() {
   const s = await api('/api/stats');
   $('stats').textContent =
     `itens: ${s.itens_aprendidos} · documentos: ${s.documentos} · ` +
-    `IAs externas: ${s.ias_externas} · ${s.banco}`;
+    `IAs externas: ${s.ias_externas} · MySQL ${s.banco.split('//')[1]||''} · FTPS ${s.ftps}`;
 }
 
 async function carregarDocs() {
   const d = await api('/api/documentos');
   if (!d.documentos.length) { $('docs').textContent = 'nenhum ainda.'; return; }
   let html = '<table><tr><th>arquivo</th><th>origem</th><th>trechos</th>' +
-             '<th>resumo</th></tr>';
+             '<th>resumo</th><th>arquivo (FTPS)</th></tr>';
   for (const doc of d.documentos) {
+    const baixar = doc.ftps
+      ? `<a href="/api/documentos/${doc.id}/baixar">baixar</a>`
+      : '<span class="hint">-</span>';
     html += `<tr><td>${esc(doc.filename)}</td><td>${esc(doc.source)}</td>` +
-            `<td>${doc.chunks}</td><td>${esc((doc.summary||'').slice(0,120))}</td></tr>`;
+            `<td>${doc.chunks}</td><td>${esc((doc.summary||'').slice(0,100))}</td>` +
+            `<td>${baixar}</td></tr>`;
   }
   $('docs').innerHTML = html + '</table>';
 }
@@ -446,7 +450,10 @@ def index():
 @app.get("/api/stats")
 def api_stats():
     with _lock:
-        return jsonify(get_brain().stats())
+        b = get_brain()
+        s = b.stats()
+        s["ftps"] = b.storage.host
+    return jsonify(s)
 
 
 @app.get("/api/documentos")
@@ -464,11 +471,24 @@ def api_documentos():
                     "chunks": d["chunks"],
                     "source": d["source"],
                     "summary": d.get("summary") or "",
+                    "ftps": bool(d.get("remote_path")),
                 }
                 for d in docs
             ]
         }
     )
+
+
+@app.get("/api/documentos/<int:doc_id>/baixar")
+def api_documento_baixar(doc_id: int):
+    with _lock:
+        res = get_brain().download_document(doc_id)
+    if res is None:
+        return jsonify({"erro": "arquivo nao disponivel no FTPS"}), 404
+    filename, data = res
+    resp = app.response_class(data, mimetype="application/octet-stream")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return resp
 
 
 @app.post("/api/ask")
@@ -625,8 +645,8 @@ def run_server(
         return 1
 
     url = f"http://{host}:{port}"
-    print(f"IA web em {url}  (Ctrl+C para sair)")
-    print(f"Banco: {_brain.stats()['banco']}")
+    print(f"PHDA CEREBROZ em {url}  (Ctrl+C para sair)")
+    print(f"Banco: {_brain.stats()['banco']}  |  Arquivos: FTPS {_brain.storage.host}")
 
     if open_browser:
         def _abrir():
@@ -644,7 +664,7 @@ def run_server(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Interface web da IA de aprendizado proprio (MySQL)."
+        description="Interface web da PHDA CEREBROZ (MySQL + FTPS)."
     )
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5000)

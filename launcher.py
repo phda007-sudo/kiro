@@ -25,7 +25,7 @@ def main() -> int:
     threshold = float(os.environ.get("IA_THRESHOLD", "0.30"))
 
     print("=" * 60)
-    print(" IA de Aprendizado Proprio")
+    print(" PHDA CEREBROZ")
     print(" Iniciando servidor e abrindo o navegador...")
     print("=" * 60)
 
