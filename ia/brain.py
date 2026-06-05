@@ -17,6 +17,8 @@ from __future__ import annotations
 import math
 import os
 import tempfile
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from . import automation, files, generate, providers, storage, text
@@ -78,6 +80,32 @@ class Brain:
         self.db = db if db is not None else MySQLDatabase(**mysql_kwargs)
         self.storage = ftps if ftps is not None else storage.FtpsStorage()
         self.threshold = threshold
+        # Cache de respostas (acelera perguntas repetidas). TTL curto + e
+        # invalidado em qualquer escrita de conhecimento.
+        self._cache: "OrderedDict[str, tuple[float, dict]]" = OrderedDict()
+        self._cache_ttl = 30.0
+        self._cache_max = 256
+
+    # --------------------------------------------------------------- cache
+    def _cache_get(self, key: str):
+        item = self._cache.get(key)
+        if not item:
+            return None
+        ts, val = item
+        if time.time() - ts > self._cache_ttl:
+            self._cache.pop(key, None)
+            return None
+        self._cache.move_to_end(key)
+        return dict(val)
+
+    def _cache_put(self, key: str, value: dict) -> None:
+        self._cache[key] = (time.time(), dict(value))
+        self._cache.move_to_end(key)
+        while len(self._cache) > self._cache_max:
+            self._cache.popitem(last=False)
+
+    def _invalidate_cache(self) -> None:
+        self._cache.clear()
 
     # --------------------------------------------------------------- idf
     def _idf(self, token: str, df: int) -> float:
@@ -95,68 +123,90 @@ class Brain:
         response = response.strip()
         if not pattern or not response:
             raise ValueError("Pergunta e resposta nao podem ser vazias.")
+        self._invalidate_cache()
         return self.db.add_knowledge(pattern, response, source=source)
 
     # -------------------------------------------------------------- buscar
     def search(self, query: str, top_k: int = 5) -> list[Match]:
         """
-        Busca no banco os itens mais parecidos com a pergunta, ordenados
-        por confianca (maior primeiro).
+        Busca no banco os itens mais parecidos com a pergunta, ordenados por
+        confianca. Otimizado: usa poucas queries (bulk) em vez de uma por
+        candidato, o que acelera muito a resposta no MySQL remoto.
         """
         q_tokens = text.tokenize(query)
         if not q_tokens:
             return []
 
-        # Vetor TF-IDF da consulta.
         q_tf: dict[str, int] = {}
         for tok in q_tokens:
             q_tf[tok] = q_tf.get(tok, 0) + 1
 
-        df_map = self.db.df_for_tokens(list(q_tf.keys()))
-        q_vec: dict[str, float] = {}
-        for tok, tf in q_tf.items():
+        # 1 query: documentos candidatos (compartilham >=1 token com a consulta)
+        candidates = self.db.candidates_for_tokens(list(q_tf.keys()))
+        if not candidates:
+            return []
+        kids = list(candidates.keys())
+
+        # 1 query: todos os tokens de todos os candidatos
+        doc_tokens = self.db.fetch_doc_tokens_bulk(kids)
+
+        # 1 query: df de todos os tokens envolvidos (consulta + documentos)
+        all_tokens: set[str] = set(q_tf.keys())
+        for toks in doc_tokens.values():
+            all_tokens.update(toks.keys())
+        df_map = self.db.df_for_tokens(list(all_tokens))
+
+        n_docs = self.db.doc_count
+
+        def idf(tok: str) -> float:
             df = df_map.get(tok, 0)
-            q_vec[tok] = tf * self._idf(tok, df)
+            return math.log((1 + n_docs) / (1 + df)) + 1.0
+
+        q_vec = {tok: tf * idf(tok) for tok, tf in q_tf.items()}
         q_norm = math.sqrt(sum(v * v for v in q_vec.values()))
         if q_norm == 0:
             return []
 
-        # Candidatos: documentos que compartilham ao menos um token.
-        candidates = self.db.candidates_for_tokens(list(q_tf.keys()))
-        matches: list[Match] = []
-
-        for kid, data in candidates.items():
-            doc_tf = self.db.get_doc_tokens(kid)
-            # Vetor TF-IDF do documento (sobre todos os seus tokens).
-            doc_df = self.db.df_for_tokens(list(doc_tf.keys()))
-            doc_vec: dict[str, float] = {}
-            for tok, tf in doc_tf.items():
-                doc_vec[tok] = tf * self._idf(tok, doc_df.get(tok, 0))
+        scored: list[tuple[int, float]] = []
+        for kid in kids:
+            toks = doc_tokens.get(kid)
+            if not toks:
+                continue
+            doc_vec = {tok: tf * idf(tok) for tok, tf in toks.items()}
             doc_norm = math.sqrt(sum(v * v for v in doc_vec.values()))
             if doc_norm == 0:
                 continue
-
-            # Produto interno apenas nos tokens em comum.
             dot = 0.0
             for tok, qval in q_vec.items():
-                if tok in doc_vec:
-                    dot += qval * doc_vec[tok]
+                dv = doc_vec.get(tok)
+                if dv:
+                    dot += qval * dv
+            sim = dot / (q_norm * doc_norm)
+            if sim > 0:
+                scored.append((kid, sim))
 
-            similarity = dot / (q_norm * doc_norm)
-            if similarity <= 0:
+        if not scored:
+            return []
+        # Pega mais que top_k antes do boost por reforco, depois reordena.
+        scored.sort(key=lambda x: x[1], reverse=True)
+        pre = scored[: max(top_k * 3, top_k)]
+
+        # 1 query: dados dos melhores candidatos
+        rows = self.db.fetch_knowledge_bulk([kid for kid, _ in pre])
+        matches: list[Match] = []
+        for kid, sim in pre:
+            row = rows.get(kid)
+            if not row:
                 continue
-
-            row = self.db.get_knowledge(kid)
             matches.append(
                 Match(
                     knowledge_id=kid,
                     pattern=row["pattern"],
                     response=row["response"],
-                    similarity=similarity,
+                    similarity=sim,
                     score=row["score"],
                 )
             )
-
         matches.sort(key=lambda m: m.confidence, reverse=True)
         return matches[:top_k]
 
@@ -182,9 +232,11 @@ class Brain:
 
     # ------------------------------------------------------------- feedback
     def reinforce(self, knowledge_id: int, amount: float = 1.0) -> None:
+        self._invalidate_cache()
         self.db.reinforce(knowledge_id, amount)
 
     def forget(self, knowledge_id: int) -> bool:
+        self._invalidate_cache()
         return self.db.forget(knowledge_id)
 
     # --------------------------------------------------- IAs externas
@@ -271,6 +323,7 @@ class Brain:
                 if learn:
                     try:
                         self.db.add_knowledge(question, ans, source=f"ia:{p['name']}")
+                        self._invalidate_cache()
                     except Exception:  # noqa: BLE001
                         pass
                 return ans, p["name"]
@@ -290,25 +343,35 @@ class Brain:
         confianca, e (quando nao sabe) palpite, alem de sinalizar se nao ha IA
         externa cadastrada ou se elas nao responderam.
         """
+        ckey = text.normalize(question)
+        cached = self._cache_get(ckey)
+        if cached is not None:
+            cached["cache"] = True
+            return cached
+
         resposta, match = self.respond(question)
         if resposta is not None:
-            return {
+            res = {
                 "resposta": resposta,
                 "fonte": "local",
                 "confianca": round(match.confidence, 3),
                 "id": match.knowledge_id,
             }
+            self._cache_put(text.normalize(question), res)
+            return res
 
         tem_externa = self.has_external()
         if use_external and tem_externa:
             ans, nome = self.ask_external(question, learn=True)
             if ans:
-                return {
+                res = {
                     "resposta": ans,
                     "fonte": f"ia:{nome}",
                     "confianca": 1.0,
                     "aprendido": True,
                 }
+                self._cache_put(text.normalize(question), res)
+                return res
 
         return {
             "resposta": None,
@@ -331,6 +394,7 @@ class Brain:
         prog = progress or (lambda *a, **k: None)
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
         tamanho = len(data)
+        self._invalidate_cache()
 
         prog(8, "extraindo texto do arquivo")
         conteudo, nota = files.extract_text(data, filename)
@@ -421,6 +485,7 @@ class Brain:
             raise ValueError("O conteudo fornecido pela IA esta vazio.")
         if not filename.strip():
             filename = "(sem nome)"
+        self._invalidate_cache()
 
         src = f"ia:{ai_name}"
         analise = files.analyze(content)

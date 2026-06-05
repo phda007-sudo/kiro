@@ -128,6 +128,9 @@ class MySQLDatabase:
             charset="utf8mb4",
             cursorclass=DictCursor,
             autocommit=False,
+            # READ COMMITTED: cada leitura enxerga o ultimo commit (essencial
+            # para a conexao de leitura ver o que a de escrita acabou de gravar).
+            init_command="SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
         )
         self.database = self._conn_kwargs["database"]
         self.conn = pymysql.connect(**self._conn_kwargs)
@@ -443,6 +446,33 @@ class MySQLDatabase:
             (knowledge_id,),
         )
         return {row["token"]: row["tf"] for row in rows}
+
+    def fetch_doc_tokens_bulk(self, kids: list[int]) -> dict[int, dict[str, int]]:
+        """Tokens (e tf) de VARIOS documentos numa unica query (performance)."""
+        if not kids:
+            return {}
+        placeholders = ",".join(["%s"] * len(kids))
+        rows = self._query_all(
+            f"SELECT token, knowledge_id, tf FROM postings "
+            f"WHERE knowledge_id IN ({placeholders})",
+            tuple(kids),
+        )
+        out: dict[int, dict[str, int]] = {}
+        for row in rows:
+            out.setdefault(row["knowledge_id"], {})[row["token"]] = row["tf"]
+        return out
+
+    def fetch_knowledge_bulk(self, kids: list[int]) -> dict[int, dict]:
+        """Linhas de conhecimento (id/pattern/response/score) em uma query."""
+        if not kids:
+            return {}
+        placeholders = ",".join(["%s"] * len(kids))
+        rows = self._query_all(
+            f"SELECT id, pattern, response, score FROM knowledge "
+            f"WHERE id IN ({placeholders})",
+            tuple(kids),
+        )
+        return {row["id"]: row for row in rows}
 
     def get_knowledge(self, knowledge_id: int) -> dict | None:
         return self._query_one(

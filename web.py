@@ -38,9 +38,13 @@ from ia import Brain
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB por upload
 
-# A conexao MySQL (pymysql) nao e thread-safe; serializamos o acesso.
-_lock = threading.Lock()
-_brain: Brain | None = None
+# Conexao de ESCRITA (jobs/aprendizado) e conexao de LEITURA dedicada.
+# Assim o chat (leitura) responde mesmo enquanto um upload longo (escrita)
+# esta em andamento -> mais agilidade e sem travar.
+_lock = threading.Lock()          # serializa escritas
+_rlock = threading.Lock()         # serializa a conexao de leitura
+_brain: Brain | None = None       # escrita
+_brain_ro: Brain | None = None    # leitura
 
 # ----------------------------------------------------------------- jobs
 # Trabalhos demorados rodam em thread separada (a UI nao trava) e reportam
@@ -90,6 +94,11 @@ def _run_job(jid: str, fn):
 def get_brain() -> Brain:
     assert _brain is not None
     return _brain
+
+
+def get_brain_ro() -> Brain:
+    """Conexao de leitura (cai para a de escrita se indisponivel)."""
+    return _brain_ro if _brain_ro is not None else get_brain()
 
 
 INDEX_HTML = """<!doctype html>
@@ -650,10 +659,27 @@ def index():
     return INDEX_HTML
 
 
+@app.get("/api/health")
+def api_health():
+    """Verificacao rapida de saude e latencia do banco."""
+    import time as _t
+    info = {"ok": True}
+    t0 = _t.time()
+    try:
+        with _rlock:
+            s = get_brain_ro().stats()
+        info["mysql_ms"] = round((_t.time() - t0) * 1000, 1)
+        info["itens_aprendidos"] = s.get("itens_aprendidos")
+        info["ias_externas"] = s.get("ias_externas")
+    except Exception as e:  # noqa: BLE001
+        info = {"ok": False, "erro": str(e)}
+    return jsonify(info)
+
+
 @app.get("/api/stats")
 def api_stats():
-    with _lock:
-        b = get_brain()
+    with _rlock:
+        b = get_brain_ro()
         s = b.stats()
         s["ftps"] = b.storage.host
     return jsonify(s)
@@ -661,8 +687,8 @@ def api_stats():
 
 @app.get("/api/documentos")
 def api_documentos():
-    with _lock:
-        docs = get_brain().documents()
+    with _rlock:
+        docs = get_brain_ro().documents()
     # Datas/numeros ja sao serializaveis; devolve so o que a UI usa.
     return jsonify(
         {
@@ -684,8 +710,8 @@ def api_documentos():
 
 @app.get("/api/documentos/<int:doc_id>/baixar")
 def api_documento_baixar(doc_id: int):
-    with _lock:
-        res = get_brain().download_document(doc_id)
+    with _rlock:
+        res = get_brain_ro().download_document(doc_id)
     if res is None:
         return jsonify({"erro": "arquivo nao disponivel no FTPS"}), 404
     filename, data = res
@@ -700,16 +726,41 @@ def api_ask():
     pergunta = (data.get("pergunta") or "").strip()
     if not pergunta:
         return jsonify({"erro": "pergunta vazia"}), 400
-    with _lock:
-        res = get_brain().answer(pergunta, use_external=True)
+    # Leitura concorrente: o chat responde mesmo durante um upload em andamento.
+    with _rlock:
+        res = get_brain_ro().answer(pergunta, use_external=True)
     return jsonify(res)
+
+
+@app.post("/api/buscar")
+def api_buscar():
+    data = request.get_json(silent=True) or {}
+    consulta = (data.get("consulta") or "").strip()
+    if not consulta:
+        return jsonify({"erro": "consulta vazia"}), 400
+    with _rlock:
+        matches = get_brain_ro().search(consulta, top_k=int(data.get("top_k", 5)))
+    return jsonify(
+        {
+            "resultados": [
+                {
+                    "id": m.knowledge_id,
+                    "pattern": m.pattern,
+                    "response": m.response,
+                    "similaridade": round(m.similarity, 3),
+                    "confianca": round(m.confidence, 3),
+                }
+                for m in matches
+            ]
+        }
+    )
 
 
 # ----------------------------------------------------- provedores de IA
 @app.get("/api/provedores")
 def api_provedores_listar():
-    with _lock:
-        return jsonify({"provedores": get_brain().list_providers()})
+    with _rlock:
+        return jsonify({"provedores": get_brain_ro().list_providers()})
 
 
 @app.post("/api/provedores")
@@ -869,9 +920,14 @@ def run_server(
     Usado tanto pela linha de comando (`python3 web.py`) quanto pelo executavel
     (.exe) gerado pelo PyInstaller via launcher.py.
     """
-    global _brain
+    global _brain, _brain_ro
     try:
         _brain = Brain(threshold=threshold)
+        # Conexao separada para leitura (chat responde durante uploads longos).
+        try:
+            _brain_ro = Brain(threshold=threshold)
+        except Exception:  # noqa: BLE001
+            _brain_ro = _brain
     except Exception as e:  # noqa: BLE001
         print(f"[ERRO] Nao consegui conectar ao MySQL: {e}")
         print("Defina IA_MYSQL_* nas variaveis de ambiente, se necessario.")

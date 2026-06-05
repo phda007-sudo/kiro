@@ -36,6 +36,18 @@ Nenhum servico de rede e chamado por padrao, exceto o seu proprio MySQL (para o
 conhecimento) e o seu FTPS (para guardar os arquivos). IAs externas so sao
 chamadas se voce as cadastrar.
 
+## Desempenho e robustez
+
+- **Busca em modo bulk**: a recuperacao usa poucas consultas (em vez de uma por
+  candidato), o que acelera muito as respostas no MySQL remoto.
+- **Cache de respostas**: perguntas repetidas voltam de imediato (TTL curto,
+  invalidado a cada novo aprendizado).
+- **Leitura concorrente**: o chat usa uma conexao de leitura dedicada, entao
+  responde mesmo enquanto um upload longo esta sendo processado (nao trava).
+- **Trabalhos em background com progresso**: uploads/tarefas reportam etapa e
+  porcentagem em tempo real (`/api/progresso`).
+- **READ COMMITTED**: as leituras sempre enxergam o ultimo dado gravado.
+
 ## Estrutura
 
 ```
@@ -216,6 +228,8 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 | POST | `/api/upload` | arquivo (multipart; campo opcional `ia` marca a origem) -> analisa e alimenta a IA |
 | POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info (texto) de outra IA |
 | POST | `/api/gerar` | `{assunto, formato}` -> gera e devolve o arquivo (download) |
+| POST | `/api/buscar` | `{consulta, top_k}` -> itens mais relevantes (sem responder) |
+| GET | `/api/health` | saude do banco + latencia (ms) |
 | POST | `/api/tarefa` | `tarefa` (+arquivo opcional, `saida`, `executar`) -> analisa/cria/edita, instala deps e executa |
 | GET | `/api/provedores` | lista as IAs externas (chave mascarada) |
 | POST | `/api/provedores` | `{name, kind, base_url, model, api_key}` -> cadastra IA externa |
