@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from . import files, text
+from . import files, generate, text
 from .db_mysql import MySQLDatabase
 
 
@@ -282,6 +282,36 @@ class Brain:
 
     def documents(self) -> list[dict]:
         return self.db.list_documents()
+
+    # ---------------------------------------------------------- gerar
+    def compose(self, subject: str, max_items: int = 12) -> list[str]:
+        """Reune os trechos de conhecimento mais relevantes sobre um assunto."""
+        matches = self.search(subject, top_k=max_items)
+        sections: list[str] = []
+        seen: set[str] = set()
+        for m in matches:
+            resp = (m.response or "").strip()
+            if not resp:
+                continue
+            chave = resp[:80].lower()
+            if chave in seen:
+                continue
+            seen.add(chave)
+            sections.append(resp)
+        return sections
+
+    def generate_file(
+        self, subject: str, ext: str, max_items: int = 12
+    ) -> tuple[str, bytes, str]:
+        """
+        Gera um arquivo sobre `subject` na extensao `ext`, usando o que a IA
+        aprendeu. Retorna (nome_do_arquivo, bytes, mimetype).
+        """
+        subject = (subject or "").strip()
+        if not subject:
+            raise ValueError("Informe o assunto a ser gerado.")
+        sections = self.compose(subject, max_items=max_items)
+        return generate.render(subject, sections, ext)
 
     def stats(self) -> dict:
         return self.db.stats()

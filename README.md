@@ -122,7 +122,7 @@ pip install -r requirements.txt
 python3 web.py          # abre em http://127.0.0.1:5000
 ```
 
-A pagina tem tres partes:
+A pagina tem quatro partes:
 
 1. **Conversar** — chat com a IA. Se ela nao souber, pergunta a resposta certa
    e aprende na hora.
@@ -139,9 +139,16 @@ A pagina tem tres partes:
 3. **Alimentar com info de outra IA** — registre conhecimento vindo de **outra
    inteligencia artificial** sobre um arquivo. Duas formas:
    - **colar o texto** que a outra IA produziu, ou
-   - **enviar um arquivo** direto como carga de informacao.
+   - **enviar um arquivo** (`pdf, md, txt, docx, ...`) direto como carga de
+     informacao.
    Informe o nome da IA; o conteudo e guardado marcado com a origem `ia:<nome>`
    e passa a ser usado nas respostas.
+4. **Gerar arquivo sobre um assunto** — informe um assunto e a **extensao**
+   desejada; a IA reune o que aprendeu sobre o tema e **gera o arquivo para
+   download** no formato pedido: `pdf, py, md, txt, html, json, csv, docx,
+   xlsx` ou **qualquer outra extensao** (ex.: `js, sql, java`, que saem como
+   texto/comentarios). PDF usa `fpdf2`; DOCX usa `python-docx`; XLSX usa
+   `openpyxl`.
 
 Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 "Documentos absorvidos".
@@ -154,6 +161,7 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 | POST | `/api/ensinar` | `{pergunta, resposta}` -> aprende |
 | POST | `/api/upload` | arquivo (multipart; campo opcional `ia` marca a origem) -> analisa e alimenta a IA |
 | POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info (texto) de outra IA |
+| POST | `/api/gerar` | `{assunto, formato}` -> gera e devolve o arquivo (download) |
 | GET | `/api/stats` | estatisticas do banco |
 | GET | `/api/documentos` | lista de documentos absorvidos |
 
@@ -161,6 +169,7 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 
 ```
 voce> /analisar /caminho/para/relatorio.pdf   # analisa e absorve um arquivo
+voce> /gerar pdf produto Aurora               # gera produto_aurora.pdf no disco
 voce> /documentos                             # lista os arquivos absorvidos
 voce> resumo do arquivo relatorio.pdf         # pergunta sobre o que absorveu
 ```
@@ -190,6 +199,11 @@ print(info["resumo"], info["trechos_indexados"])
 # Alimentar com info de outra IA sobre um arquivo:
 ia.feed_from_ai("relatorio.pdf", "Resumo produzido por outra IA...", ai_name="GPT")
 
+# Gerar um arquivo sobre um assunto no formato desejado:
+nome, conteudo, mime = ia.generate_file("produto Aurora", "pdf")
+with open(nome, "wb") as f:
+    f.write(conteudo)   # -> produto_aurora.pdf
+
 ia.close()
 ```
 
@@ -200,6 +214,7 @@ ia.close()
 | `/ensinar` / `/ensinar P \| R` | ensina um par pergunta/resposta |
 | `/buscar texto` | mostra os itens mais parecidos |
 | `/analisar <caminho>` | le um arquivo do disco, analisa e absorve |
+| `/gerar <ext> <assunto>` | gera um arquivo (pdf, py, md, txt...) sobre o assunto |
 | `/documentos` | lista os arquivos absorvidos |
 | `/esquecer <id>` | remove um item de conhecimento |
 | `/bom` | reforca a ultima resposta dada |
@@ -248,8 +263,9 @@ O executavel aparece em `dist/intart-ia.exe`. Basta dar dois cliques.
 
 ## Limitacoes (e proximos passos possiveis)
 
-- E uma IA de **recuperacao** (encontra a melhor resposta ja aprendida), nao
-  uma que **gera** texto novo. Isso a torna leve e transparente.
-- Ideias de evolucao: gerar respostas com cadeias de Markov a partir do que
+- E uma IA de **recuperacao**: responde e **gera documentos** a partir do que
+  ja aprendeu (nao inventa conteudo novo do zero). Isso a torna leve e
+  transparente.
+- Ideias de evolucao: gerar texto novo com cadeias de Markov a partir do que
   aprendeu, suporte a sinonimos, e correcao de erros de digitacao (distancia
   de edicao) na busca.

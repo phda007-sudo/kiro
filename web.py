@@ -8,7 +8,11 @@ Sobe um servidor local com:
       (a "telinha" para buscar o arquivo), analisa o conteudo de diversas
       extensoes e absorve o que aprendeu para o banco;
     - um painel para ALIMENTAR a IA com informacoes produzidas por OUTRAS
-      inteligencias artificiais sobre determinados arquivos.
+      inteligencias artificiais sobre determinados arquivos (texto colado OU
+      arquivo: pdf, md, txt, docx, etc);
+    - um gerador que produz um arquivo sobre um ASSUNTO no formato pedido
+      (pdf, py, md, txt, html, json, csv, docx, xlsx, ...), a partir do que a
+      IA aprendeu.
 
 Sem nenhuma API externa: o servidor e local (Flask) e o unico servico de rede
 usado e o seu proprio MySQL.
@@ -150,6 +154,28 @@ INDEX_HTML = """<!doctype html>
     <div class="result" id="res-feed"></div>
   </section>
 
+  <!-- GERAR ARQUIVO -->
+  <section class="card full">
+    <h2>🛠️ Gerar arquivo sobre um assunto</h2>
+    <p class="hint">A IA reune o que ja aprendeu sobre o assunto e gera um arquivo
+       no formato que voce pedir: <b>pdf, py, md, txt, html, json, csv, docx,
+       xlsx</b> ou qualquer outra extensao (ex.: js, sql, java...).</p>
+    <div class="row">
+      <input type="text" id="gen-assunto" class="grow"
+             placeholder="Assunto (ex: manual do produto Aurora)">
+      <input type="text" id="gen-formato" list="formatos" style="max-width:140px"
+             value="pdf" placeholder="formato">
+      <datalist id="formatos">
+        <option value="pdf"><option value="py"><option value="md">
+        <option value="txt"><option value="html"><option value="json">
+        <option value="csv"><option value="docx"><option value="xlsx">
+        <option value="js"><option value="sql"><option value="java">
+      </datalist>
+      <button onclick="gerar()">Gerar e baixar</button>
+    </div>
+    <div class="result" id="res-gen"></div>
+  </section>
+
   <!-- DOCUMENTOS -->
   <section class="card full">
     <h2>📚 Documentos absorvidos</h2>
@@ -288,6 +314,34 @@ async function alimentarArquivo() {
   $('feed-arquivo').value = '';
 }
 
+async function gerar() {
+  const assunto = $('gen-assunto').value.trim();
+  const formato = ($('gen-formato').value.trim() || 'txt').replace(/^\\./, '');
+  if (!assunto) { $('res-gen').innerHTML = '<span class="warn">informe o assunto.</span>'; return; }
+  $('res-gen').innerHTML = 'gerando <b>' + esc(assunto) + '</b> em .' + esc(formato) + '...';
+  try {
+    const r = await fetch('/api/gerar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({assunto, formato})
+    });
+    if (!r.ok) {
+      let msg = 'falha ao gerar';
+      try { const e = await r.json(); msg = e.erro || msg; } catch (_) {}
+      $('res-gen').innerHTML = '<span class="warn">' + esc(msg) + '</span>';
+      return;
+    }
+    let nome = r.headers.get('X-Arquivo') || ('documento.' + formato);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nome; document.body.appendChild(a);
+    a.click(); a.remove(); URL.revokeObjectURL(url);
+    $('res-gen').innerHTML = '<span class="ok">gerado e baixado: <b>' + esc(nome) + '</b></span>';
+  } catch (e) {
+    $('res-gen').innerHTML = '<span class="warn">falha: ' + esc(''+e) + '</span>';
+  }
+}
+
 carregarStats(); carregarDocs();
 </script>
 </body>
@@ -403,6 +457,25 @@ def api_alimentar():
         return jsonify(resultado)
     except Exception as e:  # noqa: BLE001
         return jsonify({"erro": f"falha ao alimentar: {e}"}), 500
+
+
+@app.post("/api/gerar")
+def api_gerar():
+    data = request.get_json(silent=True) or request.form
+    assunto = (data.get("assunto") or "").strip()
+    formato = (data.get("formato") or "txt").strip()
+    if not assunto:
+        return jsonify({"erro": "informe o assunto"}), 400
+    try:
+        with _lock:
+            filename, blob, mime = get_brain().generate_file(assunto, formato)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"erro": f"falha ao gerar: {e}"}), 500
+
+    resp = app.response_class(blob, mimetype=mime)
+    resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    resp.headers["X-Arquivo"] = filename
+    return resp
 
 
 def run_server(

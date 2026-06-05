@@ -29,6 +29,7 @@ for _pkg in (
     "docx",
     "openpyxl",
     "lxml",
+    "fpdf",
 ):
     try:
         _d, _b, _h = collect_all(_pkg)

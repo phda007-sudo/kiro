@@ -17,6 +17,7 @@ Comandos especiais (comecam com "/"):
     /ensinar P | R        -> ensina direto: "P" vira pergunta e "R" a resposta
     /buscar texto         -> mostra os itens mais parecidos com pontuacao
     /analisar <caminho>   -> le um arquivo do disco, analisa e absorve para a IA
+    /gerar <ext> <assunto>-> gera um arquivo (pdf, py, md, txt...) sobre o assunto
     /documentos           -> lista os arquivos ja absorvidos
     /esquecer <id>        -> remove um item de conhecimento pelo id
     /bom                  -> reforca (feedback positivo) a ultima resposta dada
@@ -112,6 +113,17 @@ def comando(brain: Brain, linha: str, ultimo_id: list[int | None]) -> bool:
             )
             if chaves:
                 print(f"  Palavras-chave: {chaves}")
+
+    elif cmd == "/gerar":
+        partes_g = arg.split(maxsplit=1)
+        if len(partes_g) < 2:
+            print("  Use: /gerar <extensao> <assunto>   (ex: /gerar pdf vendas Aurora)")
+        else:
+            ext, assunto = partes_g[0].lstrip("."), partes_g[1]
+            filename, blob, _mime = brain.generate_file(assunto, ext)
+            with open(filename, "wb") as fh:
+                fh.write(blob)
+            print(f"  Gerado: {os.path.abspath(filename)} ({len(blob)} bytes)")
 
     elif cmd == "/documentos":
         docs = brain.documents()

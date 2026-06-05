@@ -4,8 +4,11 @@ PyMySQL>=1.1        # driver MySQL (Python puro)
 # Interface web (botao de upload/analise e painel de alimentacao por outras IAs)
 Flask>=3.0
 
-# Extratores opcionais de texto. Sem eles, formatos de texto/codigo ja funcionam;
-# instalados, habilitam tambem PDF, DOCX e XLSX (degradacao graciosa se faltarem).
+# Extratores opcionais de texto (alimentacao por arquivos). Sem eles, formatos
+# de texto/codigo ja funcionam; instalados, habilitam tambem PDF, DOCX e XLSX.
 pdfminer.six>=20221105
 python-docx>=1.1
 openpyxl>=3.1
+
+# Geracao de arquivos: PDF (os demais formatos usam libs ja listadas acima)
+fpdf2>=2.7
