@@ -113,7 +113,12 @@ INDEX_HTML = """<!doctype html>
              onkeydown="if(event.key==='Enter')perguntar()">
       <button onclick="perguntar()">Enviar</button>
     </div>
-    <p class="hint">Se a IA nao souber, ela pede a resposta certa e aprende na hora.</p>
+    <p class="hint">
+      <label><input type="checkbox" id="consultar-externa">
+      Perguntar a uma IA externa quando eu nao souber (e aprender a resposta)</label>
+      &nbsp;·&nbsp; Se a IA nao souber e a opcao estiver desligada, ela pede a
+      resposta certa e aprende na hora.
+    </p>
   </section>
 
   <!-- UPLOAD / ANALISE -->
@@ -176,6 +181,33 @@ INDEX_HTML = """<!doctype html>
     <div class="result" id="res-gen"></div>
   </section>
 
+  <!-- IAs EXTERNAS (FALLBACK) -->
+  <section class="card full">
+    <h2>🌐 IAs externas (consultar quando nao souber)</h2>
+    <p class="hint">Cadastre uma IA externa com os dados de autenticacao. Quando
+       voce marcar a opcao no chat e a IA local nao souber, ela pergunta a essa
+       IA e <b>aprende</b> a resposta. A chave fica guardada no seu MySQL e so e
+       enviada ao provedor escolhido.</p>
+    <div class="row">
+      <select id="prov-kind" style="max-width:150px">
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="gemini">Gemini</option>
+        <option value="custom">Custom (compat. OpenAI)</option>
+      </select>
+      <input type="text" id="prov-nome" placeholder="Apelido (ex: meu-gpt)" style="max-width:180px">
+      <input type="text" id="prov-modelo" placeholder="Modelo (opcional)" style="max-width:200px">
+    </div>
+    <div class="row">
+      <input type="text" id="prov-baseurl" class="grow"
+             placeholder="Base URL (opcional; obrigatorio para 'custom')">
+      <input type="password" id="prov-key" class="grow" placeholder="Chave de API / token">
+      <button onclick="addProvedor()">Adicionar IA</button>
+    </div>
+    <div class="result" id="res-prov"></div>
+    <div id="provs" style="margin-top:10px"></div>
+  </section>
+
   <!-- DOCUMENTOS -->
   <section class="card full">
     <h2>📚 Documentos absorvidos</h2>
@@ -204,7 +236,7 @@ async function carregarStats() {
   const s = await api('/api/stats');
   $('stats').textContent =
     `itens: ${s.itens_aprendidos} · documentos: ${s.documentos} · ` +
-    `vocabulario: ${s.tamanho_vocabulario} · ${s.banco}`;
+    `IAs externas: ${s.ias_externas} · ${s.banco}`;
 }
 
 async function carregarDocs() {
@@ -227,12 +259,15 @@ async function perguntar() {
   if (!p) return;
   addMsg(p, 'me');
   $('pergunta').value = '';
+  const usarExterna = $('consultar-externa').checked;
   const r = await api('/api/ask', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({pergunta: p})
+    body: JSON.stringify({pergunta: p, consultar_externa: usarExterna})
   });
   if (r.resposta) {
-    addMsg(r.resposta + `  (confianca ${(r.confianca*100|0)}%)`, 'ia');
+    const via = (r.fonte && r.fonte !== 'local') ? '   [via ' + esc(r.fonte) + ']' : '';
+    addMsg(r.resposta + `  (confianca ${(r.confianca*100|0)}%)` + via, 'ia');
+    if (r.fonte && r.fonte !== 'local') { carregarStats(); carregarDocs(); }
   } else {
     const palpite = r.palpite ? `\\nMais parecido: ${r.palpite}` : '';
     addMsg('Ainda nao sei responder isso.' + palpite, 'ia low');
@@ -246,6 +281,60 @@ async function perguntar() {
       carregarStats();
     }
   }
+}
+
+async function carregarProvedores() {
+  const d = await api('/api/provedores');
+  if (!d.provedores.length) { $('provs').innerHTML = '<p class="hint">Nenhuma IA externa cadastrada.</p>'; return; }
+  let html = '<table><tr><th>IA</th><th>tipo</th><th>modelo</th><th>chave</th>' +
+             '<th>ativa</th><th></th></tr>';
+  for (const p of d.provedores) {
+    html += `<tr><td>${esc(p.name)}</td><td>${esc(p.kind)}</td>` +
+            `<td>${esc(p.model||'(padrao)')}</td><td><code>${esc(p.api_key_mascara)}</code></td>` +
+            `<td><input type="checkbox" ${p.enabled?'checked':''} ` +
+            `onchange="ativarProvedor(${p.id}, this.checked)"></td>` +
+            `<td><button class="sec" onclick="testarProvedor(${p.id})">testar</button> ` +
+            `<button class="sec" onclick="removerProvedor(${p.id})">remover</button></td></tr>`;
+  }
+  $('provs').innerHTML = html + '</table>';
+}
+
+async function addProvedor() {
+  const body = {
+    name: $('prov-nome').value.trim(),
+    kind: $('prov-kind').value,
+    base_url: $('prov-baseurl').value.trim(),
+    model: $('prov-modelo').value.trim(),
+    api_key: $('prov-key').value.trim()
+  };
+  if (!body.name || !body.api_key) { $('res-prov').innerHTML = '<span class="warn">informe apelido e chave.</span>'; return; }
+  const r = await api('/api/provedores', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+  });
+  if (r.erro) { $('res-prov').innerHTML = '<span class="warn">' + esc(r.erro) + '</span>'; return; }
+  $('res-prov').innerHTML = '<span class="ok">IA cadastrada.</span>';
+  $('prov-key').value = ''; $('prov-nome').value = '';
+  carregarProvedores(); carregarStats();
+}
+
+async function removerProvedor(id) {
+  await api('/api/provedores/' + id, { method:'DELETE' });
+  carregarProvedores(); carregarStats();
+}
+
+async function ativarProvedor(id, enabled) {
+  await api('/api/provedores/' + id + '/ativar', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({enabled})
+  });
+  carregarStats();
+}
+
+async function testarProvedor(id) {
+  $('res-prov').innerHTML = 'testando...';
+  const r = await api('/api/provedores/' + id + '/testar', { method:'POST' });
+  if (r.ok) $('res-prov').innerHTML = '<span class="ok">OK: ' + esc((r.resposta||'').slice(0,80)) + '</span>';
+  else $('res-prov').innerHTML = '<span class="warn">falhou: ' + esc(r.erro||'') + '</span>';
 }
 
 async function enviarArquivo() {
@@ -342,7 +431,7 @@ async function gerar() {
   }
 }
 
-carregarStats(); carregarDocs();
+carregarStats(); carregarDocs(); carregarProvedores();
 </script>
 </body>
 </html>
@@ -386,25 +475,62 @@ def api_documentos():
 def api_ask():
     data = request.get_json(silent=True) or {}
     pergunta = (data.get("pergunta") or "").strip()
+    consultar_externa = bool(data.get("consultar_externa"))
     if not pergunta:
         return jsonify({"erro": "pergunta vazia"}), 400
     with _lock:
-        resposta, match = get_brain().respond(pergunta)
-    if resposta is not None:
-        return jsonify(
-            {
-                "resposta": resposta,
-                "confianca": round(match.confidence, 3),
-                "id": match.knowledge_id,
-            }
-        )
-    return jsonify(
-        {
-            "resposta": None,
-            "palpite": match.response if match else None,
-            "confianca": round(match.confidence, 3) if match else 0,
-        }
-    )
+        res = get_brain().answer(pergunta, use_external=consultar_externa)
+    return jsonify(res)
+
+
+# ----------------------------------------------------- provedores de IA
+@app.get("/api/provedores")
+def api_provedores_listar():
+    with _lock:
+        return jsonify({"provedores": get_brain().list_providers()})
+
+
+@app.post("/api/provedores")
+def api_provedores_add():
+    data = request.get_json(silent=True) or {}
+    try:
+        with _lock:
+            pid = get_brain().add_provider(
+                name=data.get("name", ""),
+                kind=data.get("kind", "openai"),
+                base_url=data.get("base_url", ""),
+                model=data.get("model", ""),
+                api_key=data.get("api_key", ""),
+                enabled=bool(data.get("enabled", True)),
+            )
+        return jsonify({"ok": True, "id": pid})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"erro": str(e)}), 400
+
+
+@app.route("/api/provedores/<int:pid>", methods=["DELETE", "POST"])
+def api_provedores_remover(pid: int):
+    with _lock:
+        ok = get_brain().delete_provider(pid)
+    return jsonify({"ok": ok})
+
+
+@app.post("/api/provedores/<int:pid>/ativar")
+def api_provedores_ativar(pid: int):
+    data = request.get_json(silent=True) or {}
+    with _lock:
+        get_brain().set_provider_enabled(pid, bool(data.get("enabled", True)))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/provedores/<int:pid>/testar")
+def api_provedores_testar(pid: int):
+    try:
+        with _lock:
+            resposta = get_brain().test_provider(pid)
+        return jsonify({"ok": True, "resposta": resposta})
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"ok": False, "erro": str(e)}), 400
 
 
 @app.post("/api/ensinar")

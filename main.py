@@ -19,6 +19,7 @@ Comandos especiais (comecam com "/"):
     /analisar <caminho>   -> le um arquivo do disco, analisa e absorve para a IA
     /gerar <ext> <assunto>-> gera um arquivo (pdf, py, md, txt...) sobre o assunto
     /documentos           -> lista os arquivos ja absorvidos
+    /provedores           -> lista as IAs externas cadastradas (fallback)
     /esquecer <id>        -> remove um item de conhecimento pelo id
     /bom                  -> reforca (feedback positivo) a ultima resposta dada
     /stats                -> mostra estatisticas do banco
@@ -158,6 +159,17 @@ def comando(brain: Brain, linha: str, ultimo_id: list[int | None]) -> bool:
         for k, v in brain.stats().items():
             print(f"  {k}: {v}")
 
+    elif cmd == "/provedores":
+        provs = brain.list_providers()
+        if not provs:
+            print("  Nenhuma IA externa cadastrada. Cadastre pela interface web.")
+        for p in provs:
+            status = "ativa" if p["enabled"] else "desativada"
+            print(
+                f"  [id={p['id']}] {p['name']} ({p['kind']}) modelo="
+                f"{p['model'] or '(padrao)'} chave={p['api_key_mascara']} [{status}]"
+            )
+
     elif cmd == "/listar":
         itens = brain.db.all_knowledge()
         if not itens:
@@ -175,23 +187,30 @@ def comando(brain: Brain, linha: str, ultimo_id: list[int | None]) -> bool:
     return True
 
 
-def conversar(brain: Brain, linha: str, ultimo_id: list[int | None]) -> None:
-    """Fluxo normal de conversa: tenta responder, se nao souber, aprende."""
-    resposta, match = brain.respond(linha)
+def conversar(
+    brain: Brain, linha: str, ultimo_id: list[int | None], usar_externa: bool = False
+) -> None:
+    """Fluxo normal de conversa: responde (local ou IA externa) ou aprende."""
+    res = brain.answer(linha, use_external=usar_externa)
 
-    if resposta is not None:
-        print(f"ia> {resposta}")
-        ultimo_id[0] = match.knowledge_id
+    if res["resposta"] is not None:
+        fonte = res.get("fonte")
+        via = f"   [via {fonte}]" if fonte and fonte != "local" else ""
+        print(f"ia> {res['resposta']}{via}")
+        if res.get("id"):
+            ultimo_id[0] = res["id"]
         return
 
-    # Nao soube responder.
-    if match is not None:
+    # Nao soube responder (nem local, nem IA externa).
+    if res.get("palpite"):
         print(
             f"ia> Nao tenho certeza. O mais parecido que conheco e: "
-            f"{match.response!r} (confianca {match.confidence:.2f})."
+            f"{res['palpite']!r}."
         )
     else:
         print("ia> Ainda nao sei responder isso.")
+        if usar_externa and not brain.has_external():
+            print("ia> (nenhuma IA externa cadastrada; use a interface web)")
 
     try:
         ensinar = input("ia> Qual seria a resposta certa? (enter p/ pular) ").strip()
@@ -249,6 +268,11 @@ def main() -> int:
         type=int,
         default=int(os.environ.get("IA_MYSQL_PORT", "3306")),
     )
+    parser.add_argument(
+        "--consultar-externa",
+        action="store_true",
+        help="quando nao souber, consulta as IAs externas cadastradas",
+    )
     args = parser.parse_args()
 
     try:
@@ -284,7 +308,7 @@ def main() -> int:
                     print("Ate logo!")
                     break
             else:
-                conversar(brain, linha, ultimo_id)
+                conversar(brain, linha, ultimo_id, usar_externa=args.consultar_externa)
     finally:
         brain.close()
 

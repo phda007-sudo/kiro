@@ -83,6 +83,19 @@ SCHEMA = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
     """
+    CREATE TABLE IF NOT EXISTS ai_providers (
+        id         BIGINT PRIMARY KEY AUTO_INCREMENT,
+        name       VARCHAR(128) NOT NULL,
+        kind       VARCHAR(32) NOT NULL DEFAULT 'openai',
+        base_url   VARCHAR(512) NOT NULL DEFAULT '',
+        model      VARCHAR(128) NOT NULL DEFAULT '',
+        api_key    TEXT NOT NULL,
+        enabled    TINYINT NOT NULL DEFAULT 1,
+        created_at DOUBLE NOT NULL,
+        UNIQUE KEY uq_provider_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
+    """
     CREATE TABLE IF NOT EXISTS meta (
         `key`   VARCHAR(255) PRIMARY KEY,
         `value` TEXT NOT NULL
@@ -310,6 +323,61 @@ class MySQLDatabase:
     def list_documents(self) -> list[dict]:
         return self._query_all("SELECT * FROM documents ORDER BY id DESC")
 
+    # ------------------------------------------------------ provedores IA
+    def add_provider(
+        self,
+        name: str,
+        kind: str,
+        base_url: str,
+        model: str,
+        api_key: str,
+        enabled: bool = True,
+    ) -> int:
+        """Cadastra (ou atualiza, pelo nome) um provedor de IA externa."""
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO ai_providers(name, kind, base_url, model, api_key, "
+                "enabled, created_at) VALUES(%s, %s, %s, %s, %s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE kind=VALUES(kind), "
+                "base_url=VALUES(base_url), model=VALUES(model), "
+                "api_key=VALUES(api_key), enabled=VALUES(enabled)",
+                (name, kind, base_url, model, api_key, 1 if enabled else 0, time.time()),
+            )
+            pid = cur.lastrowid
+        self.conn.commit()
+        if not pid:
+            row = self._query_one(
+                "SELECT id FROM ai_providers WHERE name = %s", (name,)
+            )
+            pid = row["id"] if row else 0
+        return pid
+
+    def list_providers(self) -> list[dict]:
+        return self._query_all("SELECT * FROM ai_providers ORDER BY id")
+
+    def enabled_providers(self) -> list[dict]:
+        return self._query_all(
+            "SELECT * FROM ai_providers WHERE enabled = 1 ORDER BY id"
+        )
+
+    def get_provider(self, provider_id: int) -> dict | None:
+        return self._query_one(
+            "SELECT * FROM ai_providers WHERE id = %s", (provider_id,)
+        )
+
+    def set_provider_enabled(self, provider_id: int, enabled: bool) -> None:
+        self._exec(
+            "UPDATE ai_providers SET enabled = %s WHERE id = %s",
+            (1 if enabled else 0, provider_id),
+        )
+
+    def delete_provider(self, provider_id: int) -> bool:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM ai_providers WHERE id = %s", (provider_id,))
+            ok = cur.rowcount > 0
+        self.conn.commit()
+        return ok
+
     # ------------------------------------------------------------- buscar
     def candidates_for_tokens(self, tokens: list[str]) -> dict[int, dict]:
         if not tokens:
@@ -394,6 +462,9 @@ class MySQLDatabase:
         total = self._query_one("SELECT COUNT(*) AS c FROM knowledge")["c"]
         vocab = self._query_one("SELECT COUNT(*) AS c FROM vocab")["c"]
         docs = self._query_one("SELECT COUNT(*) AS c FROM documents")["c"]
+        provs = self._query_one(
+            "SELECT COUNT(*) AS c FROM ai_providers WHERE enabled = 1"
+        )["c"]
         uses = self._query_one(
             "SELECT COALESCE(SUM(used_count), 0) AS c FROM knowledge"
         )["c"]
@@ -402,6 +473,7 @@ class MySQLDatabase:
             "documentos": docs,
             "tamanho_vocabulario": vocab,
             "total_de_usos": int(uses),
+            "ias_externas": provs,
             "banco": f"MySQL://{self._conn_kwargs['host']}/{self.database}",
         }
 

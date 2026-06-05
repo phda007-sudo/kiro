@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from . import files, generate, text
+from . import files, generate, providers, text
 from .db_mysql import MySQLDatabase
 
 
@@ -71,13 +71,13 @@ class Brain:
         return math.log((1 + n) / (1 + df)) + 1.0
 
     # ------------------------------------------------------------ aprender
-    def learn(self, pattern: str, response: str) -> int:
+    def learn(self, pattern: str, response: str, source: str = "manual") -> int:
         """Ensina um novo par pergunta/resposta e salva no banco."""
         pattern = pattern.strip()
         response = response.strip()
         if not pattern or not response:
             raise ValueError("Pergunta e resposta nao podem ser vazias.")
-        return self.db.add_knowledge(pattern, response)
+        return self.db.add_knowledge(pattern, response, source=source)
 
     # -------------------------------------------------------------- buscar
     def search(self, query: str, top_k: int = 5) -> list[Match]:
@@ -168,6 +168,132 @@ class Brain:
 
     def forget(self, knowledge_id: int) -> bool:
         return self.db.forget(knowledge_id)
+
+    # --------------------------------------------------- IAs externas
+    def add_provider(
+        self,
+        name: str,
+        kind: str = "openai",
+        base_url: str = "",
+        model: str = "",
+        api_key: str = "",
+        enabled: bool = True,
+    ) -> int:
+        """Cadastra/atualiza um provedor de IA externa (com autenticacao)."""
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("Informe um nome para a IA externa.")
+        if (kind or "").lower() not in providers.KINDS:
+            raise ValueError(f"tipo invalido. Use um de: {', '.join(providers.KINDS)}")
+        if not (api_key or "").strip():
+            raise ValueError("Informe a chave de autenticacao da IA externa.")
+        return self.db.add_provider(
+            name, kind.lower(), base_url.strip(), model.strip(),
+            api_key.strip(), enabled,
+        )
+
+    def list_providers(self) -> list[dict]:
+        """Lista provedores com a chave MASCARADA (nunca expoe a chave inteira)."""
+        out = []
+        for p in self.db.list_providers():
+            k = p.get("api_key") or ""
+            mascara = ("*" * max(0, len(k) - 4) + k[-4:]) if k else ""
+            out.append(
+                {
+                    "id": p["id"],
+                    "name": p["name"],
+                    "kind": p["kind"],
+                    "base_url": p["base_url"],
+                    "model": p["model"],
+                    "enabled": bool(p["enabled"]),
+                    "api_key_mascara": mascara,
+                }
+            )
+        return out
+
+    def set_provider_enabled(self, provider_id: int, enabled: bool) -> None:
+        self.db.set_provider_enabled(provider_id, enabled)
+
+    def delete_provider(self, provider_id: int) -> bool:
+        return self.db.delete_provider(provider_id)
+
+    def test_provider(self, provider_id: int) -> str:
+        p = self.db.get_provider(provider_id)
+        if not p:
+            raise ValueError("Provedor nao encontrado.")
+        return providers.ask(
+            p["kind"], p["base_url"], p["model"], p["api_key"],
+            "Responda apenas com a palavra: OK",
+        )
+
+    def ask_external(
+        self, question: str, learn: bool = True
+    ) -> tuple[str | None, str | None]:
+        """
+        Pergunta as IAs externas HABILITADAS, na ordem de cadastro. Devolve a
+        primeira resposta valida (resposta, nome_da_ia) e, por padrao, APRENDE
+        essa resposta no banco (origem 'ia:<nome>'). Se nenhuma responder,
+        devolve (None, None).
+        """
+        prompt = (
+            "Responda de forma objetiva e em portugues a seguinte pergunta:\n\n"
+            f"{question}"
+        )
+        for p in self.db.enabled_providers():
+            try:
+                ans = providers.ask(
+                    p["kind"], p["base_url"], p["model"], p["api_key"], prompt
+                )
+            except Exception:  # noqa: BLE001
+                continue  # tenta o proximo provedor
+            ans = (ans or "").strip()
+            if ans:
+                if learn:
+                    try:
+                        self.db.add_knowledge(question, ans, source=f"ia:{p['name']}")
+                    except Exception:  # noqa: BLE001
+                        pass
+                return ans, p["name"]
+        return None, None
+
+    def has_external(self) -> bool:
+        return len(self.db.enabled_providers()) > 0
+
+    def answer(self, question: str, use_external: bool = False) -> dict:
+        """
+        Responde combinando o conhecimento local e (opcionalmente) IAs externas.
+
+        1. Tenta responder com o que aprendeu (local).
+        2. Se nao tiver confianca e `use_external`, pergunta a uma IA externa
+           configurada, aprende a resposta e a devolve.
+        Retorna um dict com: resposta, fonte ('local' | 'ia:<nome>' | None),
+        confianca, e (quando nao sabe) palpite.
+        """
+        resposta, match = self.respond(question)
+        if resposta is not None:
+            return {
+                "resposta": resposta,
+                "fonte": "local",
+                "confianca": round(match.confidence, 3),
+                "id": match.knowledge_id,
+            }
+
+        if use_external and self.has_external():
+            ans, nome = self.ask_external(question, learn=True)
+            if ans:
+                return {
+                    "resposta": ans,
+                    "fonte": f"ia:{nome}",
+                    "confianca": 1.0,
+                    "aprendido": True,
+                }
+
+        return {
+            "resposta": None,
+            "fonte": None,
+            "palpite": match.response if match else None,
+            "confianca": round(match.confidence, 3) if match else 0,
+        }
 
     # --------------------------------------------------------- arquivos
     def ingest_document(

@@ -1,8 +1,12 @@
-# IA de Aprendizado Proprio (sem APIs, armazenamento em MySQL)
+# IA de Aprendizado Proprio (armazenamento em MySQL)
 
-Uma IA conversacional construida **do zero**, em **Python puro**. Ela **nao usa
-nenhuma API externa** nem modelos prontos. Toda a "inteligencia" vem de tecnicas
-classicas de recuperacao de informacao implementadas a mao.
+Uma IA conversacional construida **do zero**, em **Python puro**. Por padrao ela
+**nao usa nenhuma API externa** nem modelos prontos: toda a "inteligencia" vem
+de tecnicas classicas de recuperacao de informacao implementadas a mao.
+
+Opcionalmente, voce pode cadastrar **IAs externas** (OpenAI, Anthropic, Gemini
+ou qualquer endpoint compativel) para serem consultadas **so quando a IA local
+nao souber** a resposta - e ela **aprende** o que recebe.
 
 A ideia central:
 
@@ -149,6 +153,13 @@ A pagina tem quatro partes:
    xlsx` ou **qualquer outra extensao** (ex.: `js, sql, java`, que saem como
    texto/comentarios). PDF usa `fpdf2`; DOCX usa `python-docx`; XLSX usa
    `openpyxl`.
+5. **IAs externas (fallback)** — cadastre uma IA externa com o tipo
+   (`openai, anthropic, gemini, custom`), modelo, base URL (opcional) e a
+   **chave de autenticacao**. Marque no chat a opcao *"Perguntar a uma IA
+   externa quando eu nao souber"*: se a IA local nao tiver confianca, ela
+   consulta a IA externa, **devolve a resposta e a aprende** (origem
+   `ia:<apelido>`), ficando disponivel offline nas proximas vezes. A chave fica
+   no seu MySQL e so e enviada ao provedor escolhido.
 
 Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 "Documentos absorvidos".
@@ -162,6 +173,11 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 | POST | `/api/upload` | arquivo (multipart; campo opcional `ia` marca a origem) -> analisa e alimenta a IA |
 | POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info (texto) de outra IA |
 | POST | `/api/gerar` | `{assunto, formato}` -> gera e devolve o arquivo (download) |
+| GET | `/api/provedores` | lista as IAs externas (chave mascarada) |
+| POST | `/api/provedores` | `{name, kind, base_url, model, api_key}` -> cadastra IA externa |
+| DELETE | `/api/provedores/<id>` | remove a IA externa |
+| POST | `/api/provedores/<id>/ativar` | `{enabled}` -> ativa/desativa |
+| POST | `/api/provedores/<id>/testar` | testa a conexao com a IA externa |
 | GET | `/api/stats` | estatisticas do banco |
 | GET | `/api/documentos` | lista de documentos absorvidos |
 
@@ -204,6 +220,11 @@ nome, conteudo, mime = ia.generate_file("produto Aurora", "pdf")
 with open(nome, "wb") as f:
     f.write(conteudo)   # -> produto_aurora.pdf
 
+# (Opcional) cadastrar uma IA externa e consultar quando nao souber:
+ia.add_provider(name="meu-gpt", kind="openai", model="gpt-4o-mini",
+                api_key="sk-...")
+print(ia.answer("pergunta dificil", use_external=True))
+
 ia.close()
 ```
 
@@ -216,6 +237,7 @@ ia.close()
 | `/analisar <caminho>` | le um arquivo do disco, analisa e absorve |
 | `/gerar <ext> <assunto>` | gera um arquivo (pdf, py, md, txt...) sobre o assunto |
 | `/documentos` | lista os arquivos absorvidos |
+| `/provedores` | lista as IAs externas (fallback) cadastradas |
 | `/esquecer <id>` | remove um item de conhecimento |
 | `/bom` | reforca a ultima resposta dada |
 | `/stats` / `/listar` | estatisticas / lista tudo |
@@ -263,9 +285,12 @@ O executavel aparece em `dist/intart-ia.exe`. Basta dar dois cliques.
 
 ## Limitacoes (e proximos passos possiveis)
 
-- E uma IA de **recuperacao**: responde e **gera documentos** a partir do que
-  ja aprendeu (nao inventa conteudo novo do zero). Isso a torna leve e
-  transparente.
-- Ideias de evolucao: gerar texto novo com cadeias de Markov a partir do que
-  aprendeu, suporte a sinonimos, e correcao de erros de digitacao (distancia
-  de edicao) na busca.
+- Por padrao e uma IA de **recuperacao**: responde e **gera documentos** a
+  partir do que ja aprendeu (nao inventa conteudo novo do zero). Isso a torna
+  leve e transparente. Para respostas que ela nao tem, voce pode (opcional)
+  ligar uma **IA externa** como fallback — e o que ela responder vira
+  conhecimento aprendido.
+- As chaves das IAs externas ficam guardadas no MySQL. Em repositorio/host
+  compartilhado, trate-as como segredo (use um banco proprio e seguro).
+- Ideias de evolucao: gerar texto novo com cadeias de Markov, suporte a
+  sinonimos, e correcao de erros de digitacao na busca.
