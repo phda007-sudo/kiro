@@ -87,6 +87,14 @@ INDEX_HTML = """<!doctype html>
   button:disabled { opacity:.5; cursor:default; }
   .hint { color:var(--muted); font-size:12px; margin:6px 0 0; }
   .result { margin-top:12px; font-size:13px; }
+  .barwrap { font-size:12px; color:var(--muted); margin:8px 0 4px; }
+  .bar { height:10px; background:#0e1322; border:1px solid var(--line);
+         border-radius:6px; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:30%; border-radius:6px;
+             background:linear-gradient(90deg,var(--accent),#8ab4ff);
+             animation: ind 1.1s infinite ease-in-out; }
+  .bar.det > i { animation:none; transition:width .25s ease; }
+  @keyframes ind { 0%{margin-left:-32%} 100%{margin-left:102%} }
   .chips span { display:inline-block; background:#23304f; color:#cdd6f0;
                 border-radius:20px; padding:3px 10px; margin:3px 4px 0 0;
                 font-size:12px; }
@@ -245,11 +253,38 @@ function addMsg(texto, classe) {
   d.textContent = texto;
   c.appendChild(d);
   c.scrollTop = c.scrollHeight;
+  return d;
 }
 
 async function api(url, opts) {
   const r = await fetch(url, opts);
   return await r.json();
+}
+
+function barIndet(texto) {
+  return `<div class="barwrap">${esc(texto || 'trabalhando...')}</div>` +
+         `<div class="bar"><i></i></div>`;
+}
+function barDet(texto, pct) {
+  pct = Math.max(0, Math.min(100, pct | 0));
+  return `<div class="barwrap">${esc(texto)} ${pct}%</div>` +
+         `<div class="bar det"><i style="width:${pct}%"></i></div>`;
+}
+// Upload com barra de progresso REAL (percentual do envio) via XHR.
+function uploadXHR(url, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round(e.loaded / e.total * 100));
+    };
+    xhr.onload = () => {
+      try { resolve(JSON.parse(xhr.responseText)); }
+      catch (_) { resolve({ erro: 'resposta invalida do servidor' }); }
+    };
+    xhr.onerror = () => reject(new Error('erro de rede'));
+    xhr.send(formData);
+  });
 }
 
 async function carregarStats() {
@@ -284,17 +319,20 @@ async function perguntar() {
   addMsg(p, 'me');
   $('pergunta').value = '';
   const usarExterna = $('consultar-externa').checked;
+  const ph = addMsg('', 'ia');
+  ph.innerHTML = barIndet(usarExterna ? 'consultando IA externa...' : 'pensando...');
   const r = await api('/api/ask', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pergunta: p, consultar_externa: usarExterna})
   });
   if (r.resposta) {
     const via = (r.fonte && r.fonte !== 'local') ? '   [via ' + esc(r.fonte) + ']' : '';
-    addMsg(r.resposta + `  (confianca ${(r.confianca*100|0)}%)` + via, 'ia');
+    ph.textContent = r.resposta + `  (confianca ${(r.confianca*100|0)}%)` + via;
     if (r.fonte && r.fonte !== 'local') { carregarStats(); carregarDocs(); }
   } else {
     const palpite = r.palpite ? `\\nMais parecido: ${r.palpite}` : '';
-    addMsg('Ainda nao sei responder isso.' + palpite, 'ia low');
+    ph.className = 'msg ia low';
+    ph.textContent = 'Ainda nao sei responder isso.' + palpite;
     const ensino = prompt('Qual seria a resposta certa? (cancele para pular)');
     if (ensino && ensino.trim()) {
       await api('/api/ensinar', {
@@ -355,7 +393,7 @@ async function ativarProvedor(id, enabled) {
 }
 
 async function testarProvedor(id) {
-  $('res-prov').innerHTML = 'testando...';
+  $('res-prov').innerHTML = barIndet('testando conexao com a IA externa...');
   const r = await api('/api/provedores/' + id + '/testar', { method:'POST' });
   if (r.ok) $('res-prov').innerHTML = '<span class="ok">OK: ' + esc((r.resposta||'').slice(0,80)) + '</span>';
   else $('res-prov').innerHTML = '<span class="warn">falhou: ' + esc(r.erro||'') + '</span>';
@@ -365,14 +403,19 @@ async function tarefa() {
   const t = $('ta-tarefa').value.trim();
   const f = $('ta-arquivo').files[0];
   if (!t && !f) { $('res-tarefa').innerHTML = '<span class="warn">descreva a tarefa ou envie um arquivo.</span>'; return; }
-  $('res-tarefa').innerHTML = 'trabalhando... (pode baixar dependencias, aguarde)';
+  const fase = (p) => {
+    $('res-tarefa').innerHTML = (f && p < 100)
+      ? barDet('enviando <b>' + esc(f.name) + '</b>', p)
+      : barIndet('trabalhando... analisando, gerando codigo e baixando dependencias (aguarde)');
+  };
+  fase(f ? 0 : 100);
   const fd = new FormData();
   fd.append('tarefa', t);
   if (f) fd.append('arquivo', f);
   if ($('ta-saida').value.trim()) fd.append('saida', $('ta-saida').value.trim());
   fd.append('executar', $('ta-exec').checked ? '1' : '0');
   try {
-    const r = await api('/api/tarefa', { method:'POST', body: fd });
+    const r = await uploadXHR('/api/tarefa', fd, fase);
     if (r.erro) { $('res-tarefa').innerHTML = '<span class="warn">' + esc(r.erro) + '</span>'; return; }
     let html = '';
     if (r.analise) {
@@ -411,16 +454,21 @@ async function tarefa() {
 async function enviarArquivo() {
   const f = $('arquivo').files[0];
   if (!f) return;
-  $('res-upload').innerHTML = 'analisando <b>' + esc(f.name) + '</b>...';
+  const upd = (p) => {
+    $('res-upload').innerHTML = p < 100
+      ? barDet('enviando <b>' + esc(f.name) + '</b>', p)
+      : barIndet('analisando e absorvendo <b>' + esc(f.name) + '</b>...');
+  };
+  upd(0);
   const fd = new FormData();
   fd.append('arquivo', f);
   try {
-    const r = await api('/api/upload', { method:'POST', body: fd });
+    const r = await uploadXHR('/api/upload', fd, upd);
     if (r.erro) { $('res-upload').innerHTML = '<span class="warn">'+esc(r.erro)+'</span>'; return; }
     let chips = (r.palavras_chave||[]).map(k => `<span>${esc(k.palavra)} (${k.freq})</span>`).join('');
     $('res-upload').innerHTML =
       `<p class="ok">Analisado e absorvido: <b>${esc(r.arquivo)}</b> ` +
-      `(${r.trechos_indexados} trechos).</p>` +
+      `(${r.trechos_indexados} trechos)${r.ftps?' · guardado no FTPS':''}.</p>` +
       (r.nota ? `<p class="hint">tipo: ${esc(r.nota)}</p>` : '') +
       `<p><b>Resumo:</b> ${esc(r.resumo)||'(sem resumo)'}</p>` +
       `<div class="chips">${chips}</div>`;
@@ -436,7 +484,7 @@ async function alimentar() {
   const arquivo = $('ia-arquivo').value.trim() || '(sem nome)';
   const ia = $('ia-nome').value.trim() || 'ia-externa';
   if (!conteudo) { $('res-feed').innerHTML = '<span class="warn">cole algum conteudo.</span>'; return; }
-  $('res-feed').textContent = 'absorvendo...';
+  $('res-feed').innerHTML = barIndet('absorvendo conteudo...');
   const r = await api('/api/alimentar', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({arquivo, conteudo, ia})
@@ -453,12 +501,17 @@ async function alimentarArquivo() {
   const f = $('feed-arquivo').files[0];
   if (!f) return;
   const ia = $('ia-nome').value.trim() || 'ia-externa';
-  $('res-feed').innerHTML = 'absorvendo arquivo <b>'+esc(f.name)+'</b> de '+esc(ia)+'...';
+  const upd = (p) => {
+    $('res-feed').innerHTML = p < 100
+      ? barDet('enviando <b>' + esc(f.name) + '</b>', p)
+      : barIndet('absorvendo <b>' + esc(f.name) + '</b> de ' + esc(ia) + '...');
+  };
+  upd(0);
   const fd = new FormData();
   fd.append('arquivo', f);
   fd.append('ia', ia);
   try {
-    const r = await api('/api/upload', { method:'POST', body: fd });
+    const r = await uploadXHR('/api/upload', fd, upd);
     if (r.erro) { $('res-feed').innerHTML = '<span class="warn">'+esc(r.erro)+'</span>'; return; }
     let chips = (r.palavras_chave||[]).map(k => `<span>${esc(k.palavra)} (${k.freq})</span>`).join('');
     $('res-feed').innerHTML =
@@ -478,7 +531,7 @@ async function gerar() {
   const assunto = $('gen-assunto').value.trim();
   const formato = ($('gen-formato').value.trim() || 'txt').replace(/^\\./, '');
   if (!assunto) { $('res-gen').innerHTML = '<span class="warn">informe o assunto.</span>'; return; }
-  $('res-gen').innerHTML = 'gerando <b>' + esc(assunto) + '</b> em .' + esc(formato) + '...';
+  $('res-gen').innerHTML = barIndet('gerando <b>' + esc(assunto) + '</b> em .' + esc(formato) + '...');
   try {
     const r = await fetch('/api/gerar', {
       method:'POST', headers:{'Content-Type':'application/json'},
