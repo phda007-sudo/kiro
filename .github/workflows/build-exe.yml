@@ -1,0 +1,59 @@
+name: Build Windows EXE
+
+# Gera o intart-ia.exe num runner Windows e publica como Release (link direto).
+# Dispara:
+#   - automaticamente a cada push neste branch (atualiza a release "windows-build");
+#   - ao criar uma tag "v*" (publica tambem uma release versionada);
+#   - manualmente pela aba Actions (Run workflow).
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/ia-aprendizado-mysql"
+      - "main"
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compilar o executavel
+        run: pyinstaller --noconfirm intart-ia.spec
+
+      - name: Publicar artifact (download pela aba Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: intart-ia-windows
+          path: dist/intart-ia.exe
+
+      - name: Publicar Release com link direto (tag fixa "windows-build")
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: windows-build
+          name: "intart-ia (Windows) - build mais recente"
+          body: "Executavel da IA para Windows, gerado automaticamente. Baixe o intart-ia.exe abaixo."
+          files: dist/intart-ia.exe
+
+      - name: Publicar Release versionada (quando for uma tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/intart-ia.exe
