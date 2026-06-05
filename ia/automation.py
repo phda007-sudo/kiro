@@ -211,10 +211,14 @@ def third_party_imports(source: str) -> list[str]:
     return pacotes
 
 
-def auto_install(packages: list[str], timeout: int = 300) -> dict:
-    """Instala (pip) os pacotes informados. Best-effort, devolve log resumido."""
+def auto_install(packages: list[str], timeout: int = 300, progress=None) -> dict:
+    """Instala (pip) os pacotes informados. Best-effort, devolve log resumido.
+    `progress(feito, total, pacote)` e chamado antes de cada instalacao."""
     instalados, falhas, logs = [], [], []
-    for pkg in packages:
+    total = len(packages)
+    for i, pkg in enumerate(packages, 1):
+        if progress:
+            progress(i, total, pkg)
         try:
             proc = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "--quiet", pkg],
@@ -231,12 +235,12 @@ def auto_install(packages: list[str], timeout: int = 300) -> dict:
     return {"instalados": instalados, "falhas": falhas, "log": logs}
 
 
-def install_dependencies(source: str, timeout: int = 300) -> dict:
+def install_dependencies(source: str, timeout: int = 300, progress=None) -> dict:
     """Descobre os imports de um codigo e instala o que faltar."""
     pacotes = third_party_imports(source)
     if not pacotes:
         return {"instalados": [], "falhas": [], "log": [], "necessarios": []}
-    res = auto_install(pacotes, timeout=timeout)
+    res = auto_install(pacotes, timeout=timeout, progress=progress)
     res["necessarios"] = pacotes
     return res
 

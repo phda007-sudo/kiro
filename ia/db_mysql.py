@@ -242,7 +242,7 @@ class MySQLDatabase:
         return self.add_knowledge_bulk([(pattern, response)], source=source)[0]
 
     def add_knowledge_bulk(
-        self, items: list[tuple[str, str]], source: str = "manual"
+        self, items: list[tuple[str, str]], source: str = "manual", progress=None
     ) -> list[int]:
         """
         Insere varios itens (pattern, response) numa unica transacao.
@@ -250,15 +250,18 @@ class MySQLDatabase:
         Reduz drasticamente a latencia ao indexar muitos trechos de um arquivo
         (um unico commit em vez de um por trecho). Atualiza o indice invertido
         e o vocabulario. Itens com padrao ja existente apenas atualizam a
-        resposta/origem.
+        resposta/origem. `progress(feito, total)` e chamado a cada item.
         """
         ids: list[int] = []
         now = time.time()
         added = 0
         n = self.doc_count
+        total = len(items)
 
         with self._cursor() as cur:
-            for pattern, response in items:
+            for _i, (pattern, response) in enumerate(items, 1):
+                if progress:
+                    progress(_i, total)
                 pattern = (pattern or "").strip()
                 response = (response or "").strip()
                 if not pattern or not response:

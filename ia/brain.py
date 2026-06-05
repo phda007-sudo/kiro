@@ -319,26 +319,29 @@ class Brain:
 
     # --------------------------------------------------------- arquivos
     def ingest_document(
-        self, filename: str, data: bytes, source: str = "upload"
+        self, filename: str, data: bytes, source: str = "upload", progress=None
     ) -> dict:
         """
         Analisa um arquivo e ABSORVE seu conteudo para o banco.
 
-        Cada trecho do arquivo vira um item pesquisavel (indexado por TF-IDF),
-        e sao criados itens de "resumo" para perguntas do tipo
-        "resumo do arquivo X". Devolve a analise (palavras-chave + resumo).
+        `progress(pct, etapa)` (opcional) reporta o andamento em tempo real.
         """
+        prog = progress or (lambda *a, **k: None)
         ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        conteudo, nota = files.extract_text(data, filename)
         tamanho = len(data)
 
-        # Guarda o arquivo BRUTO no FTPS (qualquer tipo de arquivo).
+        prog(8, "extraindo texto do arquivo")
+        conteudo, nota = files.extract_text(data, filename)
+
+        prog(20, f"guardando arquivo no FTPS ({tamanho} bytes)")
         remote_path = self.storage.store(filename, data) or ""
 
         if not conteudo.strip():
+            prog(95, "registrando documento")
             doc_id = self.db.add_document(
                 filename, ext, tamanho, 0, source, "", remote_path
             )
+            prog(100, "concluido")
             return {
                 "arquivo": filename,
                 "ext": ext,
@@ -351,14 +354,22 @@ class Brain:
                 "ftps": bool(remote_path),
             }
 
+        prog(32, "analisando conteudo (resumo e palavras-chave)")
         analise = files.analyze(conteudo)
         resumo = analise["resumo"]
+        prog(42, "dividindo o texto em trechos")
         trechos = files.chunk_text(conteudo)
         src = f"{source}:{filename}"
 
-        ids = self.db.add_knowledge_bulk([(t, t) for t in trechos], source=src)
+        def _ind(feito, total):
+            pct = 45 + int(40 * feito / max(1, total))
+            prog(pct, f"indexando trecho {feito}/{total}")
 
-        # Itens dedicados de resumo (varias formas de perguntar).
+        ids = self.db.add_knowledge_bulk(
+            [(t, t) for t in trechos], source=src, progress=_ind
+        )
+
+        prog(88, "salvando resumo")
         resumo_resp = resumo or "(arquivo sem texto suficiente para resumo)"
         self.db.add_knowledge_bulk(
             [
@@ -369,9 +380,11 @@ class Brain:
             source=src,
         )
 
+        prog(95, "registrando documento")
         doc_id = self.db.add_document(
             filename, ext, tamanho, len(trechos), source, resumo, remote_path
         )
+        prog(100, "concluido")
 
         return {
             "arquivo": filename,
@@ -508,9 +521,10 @@ class Brain:
         return None, None
 
     def _gerar_codigo(
-        self, task: str, out_name: str, base_content: str
+        self, task: str, out_name: str, base_content: str, progress=None
     ) -> tuple[str | None, str | None]:
         """Gera/edita o conteudo do arquivo (IA externa, ou scaffold local)."""
+        prog = progress or (lambda *a, **k: None)
         if self.has_external():
             partes = [
                 "Voce e um gerador/editor de codigo experiente.",
@@ -525,6 +539,7 @@ class Brain:
                 f"Responda APENAS com o conteudo final do arquivo '{out_name}', "
                 "sem explicacoes e sem blocos de markdown."
             )
+            prog(35, "consultando IA externa para gerar o codigo")
             ans, nome = self.consult_provider("\n\n".join(partes))
             if ans:
                 return _strip_code_fences(ans), f"ia:{nome}"
@@ -562,6 +577,7 @@ class Brain:
         data: bytes | None = None,
         saida: str | None = None,
         executar: bool = False,
+        progress=None,
     ) -> dict:
         """
         Executa uma tarefa automatica com arquivos:
@@ -570,7 +586,10 @@ class Brain:
           - BAIXA sozinha as dependencias Python necessarias;
           - opcionalmente executa o resultado;
           - guarda o resultado no FTPS para download.
+
+        `progress(pct, etapa)` (opcional) reporta o andamento em tempo real.
         """
+        prog = progress or (lambda *a, **k: None)
         task = (task or "").strip()
         if not task and not (data and filename):
             raise ValueError("Descreva a tarefa.")
@@ -580,9 +599,11 @@ class Brain:
         in_ext = ""
 
         if data is not None and filename:
+            prog(10, f"analisando {filename}")
             analise = automation.inspect(filename, data)
             result["analise"] = analise
             in_ext = analise.get("ext", "")
+            prog(18, "guardando arquivo de entrada no FTPS")
             rp_in = self.storage.store(filename, data) or ""
             self.db.add_document(
                 filename, in_ext, len(data), 0, "tarefa-entrada",
@@ -597,7 +618,7 @@ class Brain:
         else:
             out_name = f"{generate.slugify(task or filename or 'resultado')}.{out_ext}"
 
-        codigo, fonte = self._gerar_codigo(task, out_name, base_content)
+        codigo, fonte = self._gerar_codigo(task, out_name, base_content, progress=prog)
         result["fonte_codigo"] = fonte
         if codigo is None:
             result["erro"] = (
@@ -608,6 +629,7 @@ class Brain:
         result["codigo"] = codigo
 
         if out_ext == "py":
+            prog(58, "validando a sintaxe do codigo")
             estrutura = automation.py_structure(codigo)
             result["sintaxe_ok"] = estrutura.get("sintaxe_ok")
             if not estrutura.get("sintaxe_ok"):
@@ -615,14 +637,24 @@ class Brain:
             result["estrutura"] = {
                 k: estrutura.get(k) for k in ("funcoes", "classes", "imports")
             }
-            result["dependencias"] = automation.install_dependencies(codigo)
+
+            def _depprog(feito, total, pkg):
+                pct = 62 + int(22 * feito / max(1, total))
+                prog(pct, f"baixando dependencia {feito}/{total}: {pkg}")
+
+            prog(62, "verificando dependencias")
+            result["dependencias"] = automation.install_dependencies(
+                codigo, progress=_depprog
+            )
             if executar and estrutura.get("sintaxe_ok"):
+                prog(88, "executando o codigo gerado")
                 with tempfile.TemporaryDirectory() as td:
                     p = os.path.join(td, "script.py")
                     with open(p, "w", encoding="utf-8") as fh:
                         fh.write(codigo)
                     result["execucao"] = automation.run_python(p)
 
+        prog(95, "guardando resultado no FTPS")
         blob = codigo.encode("utf-8")
         rp_out = self.storage.store(out_name, blob) or ""
         doc_id = self.db.add_document(
@@ -632,6 +664,7 @@ class Brain:
         result["arquivo_gerado"] = out_name
         result["doc_id"] = doc_id
         result["ftps"] = bool(rp_out)
+        prog(100, "concluido")
         return result
 
     def stats(self) -> dict:

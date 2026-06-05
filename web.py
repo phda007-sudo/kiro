@@ -28,6 +28,7 @@ import argparse
 import os
 import threading
 import time
+import uuid
 import webbrowser
 
 from flask import Flask, jsonify, request
@@ -35,11 +36,55 @@ from flask import Flask, jsonify, request
 from ia import Brain
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64 MB por upload
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB por upload
 
 # A conexao MySQL (pymysql) nao e thread-safe; serializamos o acesso.
 _lock = threading.Lock()
 _brain: Brain | None = None
+
+# ----------------------------------------------------------------- jobs
+# Trabalhos demorados rodam em thread separada (a UI nao trava) e reportam
+# progresso em tempo real, consultado por /api/progresso/<job_id>.
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _novo_job() -> str:
+    jid = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[jid] = {"pct": 0, "etapa": "na fila...", "done": False,
+                      "erro": None, "resultado": None}
+    return jid
+
+
+def _progress_cb(jid: str):
+    def cb(pct=None, etapa=None):
+        with _JOBS_LOCK:
+            j = _JOBS.get(jid)
+            if not j:
+                return
+            if pct is not None:
+                j["pct"] = max(0, min(100, int(pct)))
+            if etapa:
+                j["etapa"] = etapa
+    return cb
+
+
+def _run_job(jid: str, fn):
+    """Executa fn(progress_cb) numa thread; serializa o acesso ao brain/DB."""
+    def worker():
+        cb = _progress_cb(jid)
+        try:
+            cb(1, "iniciando...")
+            with _lock:
+                resultado = fn(cb)
+            with _JOBS_LOCK:
+                _JOBS[jid].update(resultado=resultado, pct=100,
+                                  etapa="concluido", done=True)
+        except Exception as e:  # noqa: BLE001
+            with _JOBS_LOCK:
+                _JOBS[jid].update(erro=str(e), done=True, etapa="falha")
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def get_brain() -> Brain:
@@ -285,6 +330,23 @@ function uploadXHR(url, formData, onProgress) {
     xhr.send(formData);
   });
 }
+// Acompanha um job em tempo real (etapa + porcentagem), sem travar a pagina.
+function pollProgress(jobId, onUpdate) {
+  return new Promise((resolve) => {
+    const tick = async () => {
+      let j;
+      try {
+        const r = await fetch('/api/progresso/' + jobId);
+        j = await r.json();
+      } catch (_) { setTimeout(tick, 700); return; }
+      if (onUpdate) onUpdate(j);
+      if (j.done || j.resultado || (j.erro && j.erro !== 'job nao encontrado')) {
+        resolve(j);
+      } else { setTimeout(tick, 400); }
+    };
+    tick();
+  });
+}
 
 async function carregarStats() {
   const s = await api('/api/stats');
@@ -399,21 +461,31 @@ async function tarefa() {
   const t = $('ta-tarefa').value.trim();
   const f = $('ta-arquivo').files[0];
   if (!t && !f) { $('res-tarefa').innerHTML = '<span class="warn">descreva a tarefa ou envie um arquivo.</span>'; return; }
-  const fase = (p) => {
+  const upd = (p) => {
     $('res-tarefa').innerHTML = (f && p < 100)
       ? barDet('enviando <b>' + esc(f.name) + '</b>', p)
-      : barIndet('trabalhando... analisando, gerando codigo e baixando dependencias (aguarde)');
+      : barIndet('recebido; iniciando...');
   };
-  fase(f ? 0 : 100);
+  upd(f ? 0 : 100);
   const fd = new FormData();
   fd.append('tarefa', t);
   if (f) fd.append('arquivo', f);
   if ($('ta-saida').value.trim()) fd.append('saida', $('ta-saida').value.trim());
   fd.append('executar', $('ta-exec').checked ? '1' : '0');
   try {
-    const r = await uploadXHR('/api/tarefa', fd, fase);
+    const start = await uploadXHR('/api/tarefa', fd, (p) => {
+      if (p < 100) upd(p);
+      else $('res-tarefa').innerHTML = barIndet('recebido; iniciando...');
+    });
+    if (start.erro) { $('res-tarefa').innerHTML = '<span class="warn">' + esc(start.erro) + '</span>'; return; }
+    const j = await pollProgress(start.job_id, (st) => {
+      if (st.resultado || st.done) return;
+      $('res-tarefa').innerHTML = barDet(st.etapa || 'trabalhando...', st.pct || 0);
+    });
+    if (j.erro && !j.resultado) { $('res-tarefa').innerHTML = '<span class="warn">' + esc(j.erro) + '</span>'; return; }
+    const r = j.resultado;
     if (r.erro) { $('res-tarefa').innerHTML = '<span class="warn">' + esc(r.erro) + '</span>'; return; }
-    let html = '';
+    let html = barDet('concluido', 100);
     if (r.analise) {
       html += `<p><b>Analise de ${esc(r.analise.arquivo)}</b> — ${esc(r.analise.tipo)} ` +
               `(${r.analise.tamanho_bytes} bytes)</p>` +
@@ -440,7 +512,7 @@ async function tarefa() {
               `<pre style="white-space:pre-wrap;background:#0e1322;padding:8px;border-radius:6px;max-height:180px;overflow:auto">` +
               esc((r.execucao.stdout||'') + (r.execucao.stderr?('\\n[erros]\\n'+r.execucao.stderr):'')) + `</pre>`;
     }
-    $('res-tarefa').innerHTML = html || '<span class="ok">concluido.</span>';
+    $('res-tarefa').innerHTML = html;
     carregarStats(); carregarDocs();
   } catch (e) {
     $('res-tarefa').innerHTML = '<span class="warn">falha: ' + esc(''+e) + '</span>';
@@ -450,19 +522,25 @@ async function tarefa() {
 async function enviarArquivo() {
   const f = $('arquivo').files[0];
   if (!f) return;
-  const upd = (p) => {
-    $('res-upload').innerHTML = p < 100
-      ? barDet('enviando <b>' + esc(f.name) + '</b>', p)
-      : barIndet('analisando e absorvendo <b>' + esc(f.name) + '</b>...');
-  };
+  const upd = (p) => { $('res-upload').innerHTML = barDet('enviando <b>' + esc(f.name) + '</b>', p); };
   upd(0);
   const fd = new FormData();
   fd.append('arquivo', f);
   try {
-    const r = await uploadXHR('/api/upload', fd, upd);
-    if (r.erro) { $('res-upload').innerHTML = '<span class="warn">'+esc(r.erro)+'</span>'; return; }
+    const start = await uploadXHR('/api/upload', fd, (p) => {
+      if (p < 100) upd(p);
+      else $('res-upload').innerHTML = barIndet('recebido; iniciando processamento...');
+    });
+    if (start.erro) { $('res-upload').innerHTML = '<span class="warn">'+esc(start.erro)+'</span>'; return; }
+    const j = await pollProgress(start.job_id, (st) => {
+      if (st.resultado || st.done) return;
+      $('res-upload').innerHTML = barDet(st.etapa || 'processando...', st.pct || 0);
+    });
+    if (j.erro && !j.resultado) { $('res-upload').innerHTML = '<span class="warn">'+esc(j.erro)+'</span>'; return; }
+    const r = j.resultado;
     let chips = (r.palavras_chave||[]).map(k => `<span>${esc(k.palavra)} (${k.freq})</span>`).join('');
     $('res-upload').innerHTML =
+      barDet('concluido', 100) +
       `<p class="ok">Analisado e absorvido: <b>${esc(r.arquivo)}</b> ` +
       `(${r.trechos_indexados} trechos)${r.ftps?' · guardado no FTPS':''}.</p>` +
       (r.nota ? `<p class="hint">tipo: ${esc(r.nota)}</p>` : '') +
@@ -497,20 +575,26 @@ async function alimentarArquivo() {
   const f = $('feed-arquivo').files[0];
   if (!f) return;
   const ia = $('ia-nome').value.trim() || 'ia-externa';
-  const upd = (p) => {
-    $('res-feed').innerHTML = p < 100
-      ? barDet('enviando <b>' + esc(f.name) + '</b>', p)
-      : barIndet('absorvendo <b>' + esc(f.name) + '</b> de ' + esc(ia) + '...');
-  };
+  const upd = (p) => { $('res-feed').innerHTML = barDet('enviando <b>' + esc(f.name) + '</b>', p); };
   upd(0);
   const fd = new FormData();
   fd.append('arquivo', f);
   fd.append('ia', ia);
   try {
-    const r = await uploadXHR('/api/upload', fd, upd);
-    if (r.erro) { $('res-feed').innerHTML = '<span class="warn">'+esc(r.erro)+'</span>'; return; }
+    const start = await uploadXHR('/api/upload', fd, (p) => {
+      if (p < 100) upd(p);
+      else $('res-feed').innerHTML = barIndet('recebido; iniciando processamento...');
+    });
+    if (start.erro) { $('res-feed').innerHTML = '<span class="warn">'+esc(start.erro)+'</span>'; return; }
+    const j = await pollProgress(start.job_id, (st) => {
+      if (st.resultado || st.done) return;
+      $('res-feed').innerHTML = barDet(st.etapa || 'processando...', st.pct || 0);
+    });
+    if (j.erro && !j.resultado) { $('res-feed').innerHTML = '<span class="warn">'+esc(j.erro)+'</span>'; return; }
+    const r = j.resultado;
     let chips = (r.palavras_chave||[]).map(k => `<span>${esc(k.palavra)} (${k.freq})</span>`).join('');
     $('res-feed').innerHTML =
+      barDet('concluido', 100) +
       `<p class="ok">Arquivo absorvido como conhecimento de <b>${esc(ia)}</b>: ` +
       `<b>${esc(r.arquivo)}</b> (${r.trechos_indexados} trechos).</p>` +
       (r.nota ? `<p class="hint">tipo: ${esc(r.nota)}</p>` : '') +
@@ -690,18 +774,27 @@ def api_upload():
     data = f.read()
     if not data:
         return jsonify({"erro": "arquivo vazio"}), 400
-    # Origem opcional: se vier o nome de uma IA, o arquivo e absorvido como
-    # conhecimento vindo dela (source "ia:<nome>"); senao, como "upload".
-    # Em ambos os casos o arquivo ALIMENTA a IA (vira conhecimento pesquisavel).
     ia = (request.form.get("ia") or "").strip()
     source = f"ia:{ia}" if ia else "upload"
-    try:
-        with _lock:
-            resultado = get_brain().ingest_document(f.filename, data, source=source)
-        resultado["origem"] = source
-        return jsonify(resultado)
-    except Exception as e:  # noqa: BLE001
-        return jsonify({"erro": f"falha ao analisar: {e}"}), 500
+    nome = f.filename
+    jid = _novo_job()
+    _run_job(jid, lambda cb: dict(
+        get_brain().ingest_document(nome, data, source=source, progress=cb),
+        origem=source,
+    ))
+    return jsonify({"job_id": jid})
+
+
+@app.get("/api/progresso/<jid>")
+def api_progresso(jid: str):
+    with _JOBS_LOCK:
+        j = _JOBS.get(jid)
+        if not j:
+            return jsonify({"erro": "job nao encontrado"}), 404
+        out = dict(j)
+        if j["done"]:
+            _JOBS.pop(jid, None)  # libera memoria apos a entrega
+    return jsonify(out)
 
 
 @app.post("/api/alimentar")
@@ -753,14 +846,12 @@ def api_tarefa():
         data = f.read()
     if not tarefa and not filename:
         return jsonify({"erro": "descreva a tarefa ou envie um arquivo"}), 400
-    try:
-        with _lock:
-            res = get_brain().automate(
-                tarefa, filename=filename, data=data, saida=saida, executar=executar
-            )
-        return jsonify(res)
-    except Exception as e:  # noqa: BLE001
-        return jsonify({"erro": f"falha na tarefa: {e}"}), 500
+    jid = _novo_job()
+    _run_job(jid, lambda cb: get_brain().automate(
+        tarefa, filename=filename, data=data, saida=saida,
+        executar=executar, progress=cb,
+    ))
+    return jsonify({"job_id": jid})
 
 
 def run_server(
