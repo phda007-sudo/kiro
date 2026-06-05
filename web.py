@@ -122,10 +122,9 @@ INDEX_HTML = """<!doctype html>
       <button onclick="perguntar()">Enviar</button>
     </div>
     <p class="hint">
-      <label><input type="checkbox" id="consultar-externa">
-      Perguntar a uma IA externa quando eu nao souber (e aprender a resposta)</label>
-      &nbsp;·&nbsp; Se a IA nao souber e a opcao estiver desligada, ela pede a
-      resposta certa e aprende na hora.
+      Quando eu nao souber, pergunto <b>automaticamente</b> as IAs externas
+      cadastradas e aprendo a resposta. Cadastre-as no painel
+      "IAs externas" abaixo.
     </p>
   </section>
 
@@ -318,30 +317,27 @@ async function perguntar() {
   if (!p) return;
   addMsg(p, 'me');
   $('pergunta').value = '';
-  const usarExterna = $('consultar-externa').checked;
   const ph = addMsg('', 'ia');
-  ph.innerHTML = barIndet(usarExterna ? 'consultando IA externa...' : 'pensando...');
+  ph.innerHTML = barIndet('pensando... (consulto uma IA externa se eu nao souber)');
   const r = await api('/api/ask', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({pergunta: p, consultar_externa: usarExterna})
+    body: JSON.stringify({pergunta: p})
   });
   if (r.resposta) {
     const via = (r.fonte && r.fonte !== 'local') ? '   [via ' + esc(r.fonte) + ']' : '';
     ph.textContent = r.resposta + `  (confianca ${(r.confianca*100|0)}%)` + via;
     if (r.fonte && r.fonte !== 'local') { carregarStats(); carregarDocs(); }
   } else {
-    const palpite = r.palpite ? `\\nMais parecido: ${r.palpite}` : '';
-    ph.className = 'msg ia low';
-    ph.textContent = 'Ainda nao sei responder isso.' + palpite;
-    const ensino = prompt('Qual seria a resposta certa? (cancele para pular)');
-    if (ensino && ensino.trim()) {
-      await api('/api/ensinar', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({pergunta: p, resposta: ensino.trim()})
-      });
-      addMsg('Aprendi! Da proxima vez eu respondo.', 'ia');
-      carregarStats();
+    let msg;
+    if (r.sem_externa) {
+      msg = 'Ainda nao sei isso e nao ha nenhuma IA externa cadastrada. ' +
+            'Cadastre uma IA externa abaixo para eu buscar a resposta.';
+    } else {
+      msg = 'Ainda nao sei isso e as IAs externas cadastradas nao responderam.';
     }
+    if (r.palpite) msg += '\\nMais parecido que conheco: ' + r.palpite;
+    ph.className = 'msg ia low';
+    ph.textContent = msg;
   }
 }
 
@@ -615,11 +611,10 @@ def api_documento_baixar(doc_id: int):
 def api_ask():
     data = request.get_json(silent=True) or {}
     pergunta = (data.get("pergunta") or "").strip()
-    consultar_externa = bool(data.get("consultar_externa"))
     if not pergunta:
         return jsonify({"erro": "pergunta vazia"}), 400
     with _lock:
-        res = get_brain().answer(pergunta, use_external=consultar_externa)
+        res = get_brain().answer(pergunta, use_external=True)
     return jsonify(res)
 
 

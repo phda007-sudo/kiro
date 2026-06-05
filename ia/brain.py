@@ -277,15 +277,16 @@ class Brain:
     def has_external(self) -> bool:
         return len(self.db.enabled_providers()) > 0
 
-    def answer(self, question: str, use_external: bool = False) -> dict:
+    def answer(self, question: str, use_external: bool = True) -> dict:
         """
-        Responde combinando o conhecimento local e (opcionalmente) IAs externas.
+        Responde combinando o conhecimento local e as IAs externas.
 
         1. Tenta responder com o que aprendeu (local).
-        2. Se nao tiver confianca e `use_external`, pergunta a uma IA externa
-           configurada, aprende a resposta e a devolve.
+        2. Se nao tiver confianca, pergunta AUTOMATICAMENTE as IAs externas
+           cadastradas, aprende a resposta e a devolve (nao pergunta ao usuario).
         Retorna um dict com: resposta, fonte ('local' | 'ia:<nome>' | None),
-        confianca, e (quando nao sabe) palpite.
+        confianca, e (quando nao sabe) palpite, alem de sinalizar se nao ha IA
+        externa cadastrada ou se elas nao responderam.
         """
         resposta, match = self.respond(question)
         if resposta is not None:
@@ -296,7 +297,8 @@ class Brain:
                 "id": match.knowledge_id,
             }
 
-        if use_external and self.has_external():
+        tem_externa = self.has_external()
+        if use_external and tem_externa:
             ans, nome = self.ask_external(question, learn=True)
             if ans:
                 return {
@@ -311,6 +313,8 @@ class Brain:
             "fonte": None,
             "palpite": match.response if match else None,
             "confianca": round(match.confidence, 3) if match else 0,
+            "sem_externa": not tem_externa,
+            "externa_tentada": bool(use_external and tem_externa),
         }
 
     # --------------------------------------------------------- arquivos

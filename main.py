@@ -208,11 +208,9 @@ def comando(brain: Brain, linha: str, ultimo_id: list[int | None]) -> bool:
     return True
 
 
-def conversar(
-    brain: Brain, linha: str, ultimo_id: list[int | None], usar_externa: bool = False
-) -> None:
-    """Fluxo normal de conversa: responde (local ou IA externa) ou aprende."""
-    res = brain.answer(linha, use_external=usar_externa)
+def conversar(brain: Brain, linha: str, ultimo_id: list[int | None]) -> None:
+    """Responde com o conhecimento local; se nao souber, consulta as IAs externas."""
+    res = brain.answer(linha, use_external=True)
 
     if res["resposta"] is not None:
         fonte = res.get("fonte")
@@ -223,26 +221,15 @@ def conversar(
         return
 
     # Nao soube responder (nem local, nem IA externa).
-    if res.get("palpite"):
+    if res.get("sem_externa"):
         print(
-            f"ia> Nao tenho certeza. O mais parecido que conheco e: "
-            f"{res['palpite']!r}."
+            "ia> Ainda nao sei isso e nao ha IA externa cadastrada. "
+            "Cadastre uma na interface web para eu buscar a resposta."
         )
     else:
-        print("ia> Ainda nao sei responder isso.")
-        if usar_externa and not brain.has_external():
-            print("ia> (nenhuma IA externa cadastrada; use a interface web)")
-
-    try:
-        ensinar = input("ia> Qual seria a resposta certa? (enter p/ pular) ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print()
-        return
-
-    if ensinar:
-        kid = brain.learn(linha, ensinar)
-        ultimo_id[0] = kid
-        print(f"ia> Entendi! Aprendi e salvei no banco (id={kid}).")
+        print("ia> Ainda nao sei isso e as IAs externas cadastradas nao responderam.")
+    if res.get("palpite"):
+        print(f"ia> Mais parecido que conheco: {res['palpite']!r}")
 
 
 def build_brain(args) -> Brain:
@@ -289,11 +276,6 @@ def main() -> int:
         type=int,
         default=int(os.environ.get("IA_MYSQL_PORT", "3306")),
     )
-    parser.add_argument(
-        "--consultar-externa",
-        action="store_true",
-        help="quando nao souber, consulta as IAs externas cadastradas",
-    )
     args = parser.parse_args()
 
     try:
@@ -329,7 +311,7 @@ def main() -> int:
                     print("Ate logo!")
                     break
             else:
-                conversar(brain, linha, ultimo_id, usar_externa=args.consultar_externa)
+                conversar(brain, linha, ultimo_id)
     finally:
         brain.close()
 
