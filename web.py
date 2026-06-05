@@ -116,7 +116,8 @@ INDEX_HTML = """<!doctype html>
   <section class="card">
     <h2>📎 Enviar arquivo para analise</h2>
     <p class="hint">Clique no botao para escolher um arquivo (txt, md, csv, json,
-       pdf, docx, xlsx, codigo-fonte, etc). A IA analisa e absorve o conteudo.</p>
+       pdf, docx, xlsx, codigo-fonte, etc). A IA analisa e <b>alimenta o banco</b>
+       com o conteudo, passando a responder sobre ele.</p>
     <div class="row">
       <input type="file" id="arquivo" style="display:none" onchange="enviarArquivo()">
       <button onclick="document.getElementById('arquivo').click()">
@@ -129,17 +130,22 @@ INDEX_HTML = """<!doctype html>
   <!-- ALIMENTAR COM OUTRA IA -->
   <section class="card">
     <h2>🤖 Alimentar com info de outra IA</h2>
-    <p class="hint">Cole aqui o que outra inteligencia artificial produziu sobre
-       um arquivo. A IA guarda e passa a usar nas respostas.</p>
+    <p class="hint">Informe a IA de origem e o arquivo. Voce pode <b>colar o texto</b>
+       que outra IA produziu, ou <b>enviar um arquivo</b> direto como carga de
+       informacao. Tudo vira conhecimento marcado com a origem.</p>
     <div class="row">
       <input type="text" id="ia-nome" placeholder="Nome da IA (ex: GPT, Claude)">
       <input type="text" id="ia-arquivo" placeholder="Arquivo relacionado (ex: relatorio.pdf)">
     </div>
     <div class="row">
-      <textarea id="ia-conteudo" placeholder="Cole aqui as informacoes da outra IA..."></textarea>
+      <textarea id="ia-conteudo" placeholder="Cole aqui as informacoes da outra IA... (opcional se enviar um arquivo)"></textarea>
     </div>
     <div class="row">
-      <button class="sec" onclick="alimentar()">Alimentar a IA</button>
+      <button class="sec" onclick="alimentar()">Alimentar com o texto colado</button>
+      <input type="file" id="feed-arquivo" style="display:none" onchange="alimentarArquivo()">
+      <button class="sec" onclick="document.getElementById('feed-arquivo').click()">
+        Alimentar a partir de um arquivo
+      </button>
     </div>
     <div class="result" id="res-feed"></div>
   </section>
@@ -257,6 +263,31 @@ async function alimentar() {
   carregarStats(); carregarDocs();
 }
 
+async function alimentarArquivo() {
+  const f = $('feed-arquivo').files[0];
+  if (!f) return;
+  const ia = $('ia-nome').value.trim() || 'ia-externa';
+  $('res-feed').innerHTML = 'absorvendo arquivo <b>'+esc(f.name)+'</b> de '+esc(ia)+'...';
+  const fd = new FormData();
+  fd.append('arquivo', f);
+  fd.append('ia', ia);
+  try {
+    const r = await api('/api/upload', { method:'POST', body: fd });
+    if (r.erro) { $('res-feed').innerHTML = '<span class="warn">'+esc(r.erro)+'</span>'; return; }
+    let chips = (r.palavras_chave||[]).map(k => `<span>${esc(k.palavra)} (${k.freq})</span>`).join('');
+    $('res-feed').innerHTML =
+      `<p class="ok">Arquivo absorvido como conhecimento de <b>${esc(ia)}</b>: ` +
+      `<b>${esc(r.arquivo)}</b> (${r.trechos_indexados} trechos).</p>` +
+      (r.nota ? `<p class="hint">tipo: ${esc(r.nota)}</p>` : '') +
+      `<p><b>Resumo:</b> ${esc(r.resumo)||'(sem resumo)'}</p>` +
+      `<div class="chips">${chips}</div>`;
+    carregarStats(); carregarDocs();
+  } catch (e) {
+    $('res-feed').innerHTML = '<span class="warn">falha: '+esc(''+e)+'</span>';
+  }
+  $('feed-arquivo').value = '';
+}
+
 carregarStats(); carregarDocs();
 </script>
 </body>
@@ -344,9 +375,15 @@ def api_upload():
     data = f.read()
     if not data:
         return jsonify({"erro": "arquivo vazio"}), 400
+    # Origem opcional: se vier o nome de uma IA, o arquivo e absorvido como
+    # conhecimento vindo dela (source "ia:<nome>"); senao, como "upload".
+    # Em ambos os casos o arquivo ALIMENTA a IA (vira conhecimento pesquisavel).
+    ia = (request.form.get("ia") or "").strip()
+    source = f"ia:{ia}" if ia else "upload"
     try:
         with _lock:
-            resultado = get_brain().ingest_document(f.filename, data, source="upload")
+            resultado = get_brain().ingest_document(f.filename, data, source=source)
+        resultado["origem"] = source
         return jsonify(resultado)
     except Exception as e:  # noqa: BLE001
         return jsonify({"erro": f"falha ao analisar: {e}"}), 500

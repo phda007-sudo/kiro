@@ -128,17 +128,20 @@ A pagina tem tres partes:
    e aprende na hora.
 2. **Enviar arquivo para analise** — um **botao** que abre o seletor de
    arquivos do sistema (a "telinha"). Voce escolhe o arquivo, a IA **analisa**
-   (palavras-chave + resumo) e **absorve** o conteudo para o banco, ficando
-   pesquisavel. Formatos suportados:
+   (palavras-chave + resumo) e **alimenta o banco** com o conteudo (cada trecho
+   vira conhecimento pesquisavel), ficando disponivel nas respostas. Ou seja,
+   todo arquivo analisado tambem alimenta a IA. Formatos suportados:
    - Texto/codigo: `txt, md, csv, tsv, json, xml, html, yaml, ini, py, js,
      java, c, cpp, go, rb, php, sql, sh, ...`
    - Binarios (via extratores opcionais): `pdf` (pdfminer.six / PyPDF2),
      `docx` (python-docx), `xlsx` (openpyxl). Se a biblioteca nao estiver
      instalada, a IA avisa em vez de quebrar.
-3. **Alimentar com info de outra IA** — cole o que **outra inteligencia
-   artificial** produziu sobre um determinado arquivo (informe o nome da IA e
-   o arquivo). A IA guarda esse conteudo marcado com a origem `ia:<nome>` e
-   passa a usa-lo nas respostas.
+3. **Alimentar com info de outra IA** — registre conhecimento vindo de **outra
+   inteligencia artificial** sobre um arquivo. Duas formas:
+   - **colar o texto** que a outra IA produziu, ou
+   - **enviar um arquivo** direto como carga de informacao.
+   Informe o nome da IA; o conteudo e guardado marcado com a origem `ia:<nome>`
+   e passa a ser usado nas respostas.
 
 Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 "Documentos absorvidos".
@@ -149,8 +152,8 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 |---|---|---|
 | POST | `/api/ask` | `{pergunta}` -> resposta + confianca |
 | POST | `/api/ensinar` | `{pergunta, resposta}` -> aprende |
-| POST | `/api/upload` | arquivo (multipart) -> analisa e absorve |
-| POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info de outra IA |
+| POST | `/api/upload` | arquivo (multipart; campo opcional `ia` marca a origem) -> analisa e alimenta a IA |
+| POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info (texto) de outra IA |
 | GET | `/api/stats` | estatisticas do banco |
 | GET | `/api/documentos` | lista de documentos absorvidos |
 
