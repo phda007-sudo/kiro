@@ -197,17 +197,19 @@ class Brain:
         api_key: str = "",
         enabled: bool = True,
     ) -> int:
-        """Cadastra/atualiza um provedor de IA externa (com autenticacao)."""
+        """Cadastra/atualiza um provedor de IA externa (persistido no MySQL)."""
         name = (name or "").strip()
         if not name:
             raise ValueError("Informe um nome para a IA externa.")
-        if (kind or "").lower() not in providers.KINDS:
+        kind = (kind or "openai").lower()
+        if kind not in providers.KINDS:
             raise ValueError(f"tipo invalido. Use um de: {', '.join(providers.KINDS)}")
-        if not (api_key or "").strip():
+        ja_existe = any(p["name"] == name for p in self.db.list_providers())
+        if not (api_key or "").strip() and not ja_existe:
             raise ValueError("Informe a chave de autenticacao da IA externa.")
         return self.db.add_provider(
-            name, kind.lower(), base_url.strip(), model.strip(),
-            api_key.strip(), enabled,
+            name, kind, base_url.strip(), model.strip(),
+            (api_key or "").strip(), enabled,
         )
 
     def list_providers(self) -> list[dict]:

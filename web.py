@@ -236,13 +236,15 @@ INDEX_HTML = """<!doctype html>
   <!-- IAs EXTERNAS (FALLBACK) -->
   <section class="card full">
     <h2>🌐 IAs externas (consultar quando nao souber)</h2>
-    <p class="hint">Cadastre uma IA externa com os dados de autenticacao. Quando
-       voce marcar a opcao no chat e a IA local nao souber, ela pergunta a essa
-       IA e <b>aprende</b> a resposta. A chave fica guardada no seu MySQL e so e
-       enviada ao provedor escolhido.</p>
+    <p class="hint">Cadastre uma IA externa com os dados de autenticacao. Quando a
+       IA local nao souber, ela pergunta automaticamente a essa IA e <b>aprende</b>
+       a resposta. Os dados (inclusive a chave) <b>ficam salvos no MySQL</b> e
+       persistem ao fechar. Para editar um cadastro, repita o mesmo apelido; deixe
+       a chave em branco para manter a atual.</p>
     <div class="row">
       <select id="prov-kind" style="max-width:150px">
         <option value="openai">OpenAI</option>
+        <option value="deepseek">DeepSeek</option>
         <option value="anthropic">Anthropic</option>
         <option value="gemini">Gemini</option>
         <option value="custom">Custom (compat. OpenAI)</option>
@@ -427,12 +429,13 @@ async function addProvedor() {
     model: $('prov-modelo').value.trim(),
     api_key: $('prov-key').value.trim()
   };
-  if (!body.name || !body.api_key) { $('res-prov').innerHTML = '<span class="warn">informe apelido e chave.</span>'; return; }
+  if (!body.name) { $('res-prov').innerHTML = '<span class="warn">informe um apelido.</span>'; return; }
+  $('res-prov').innerHTML = barIndet('salvando no banco...');
   const r = await api('/api/provedores', {
     method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
   if (r.erro) { $('res-prov').innerHTML = '<span class="warn">' + esc(r.erro) + '</span>'; return; }
-  $('res-prov').innerHTML = '<span class="ok">IA cadastrada.</span>';
+  $('res-prov').innerHTML = '<span class="ok">Salvo no MySQL (id=' + r.id + '). Persiste mesmo apos fechar.</span>';
   $('prov-key').value = ''; $('prov-nome').value = '';
   carregarProvedores(); carregarStats();
 }

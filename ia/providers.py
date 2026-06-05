@@ -24,6 +24,7 @@ DEFAULTS = {
     "openai": ("https://api.openai.com", "gpt-4o-mini"),
     "anthropic": ("https://api.anthropic.com", "claude-3-5-sonnet-latest"),
     "gemini": ("https://generativelanguage.googleapis.com", "gemini-1.5-flash"),
+    "deepseek": ("https://api.deepseek.com", "deepseek-chat"),
     "custom": ("", "gpt-3.5-turbo"),
 }
 
@@ -93,7 +94,7 @@ def ask(
         )
         return (data["candidates"][0]["content"]["parts"][0]["text"]).strip()
 
-    # openai e custom (compativel com OpenAI: Groq, OpenRouter, LM local, etc.)
+    # openai, deepseek e custom (compativel com OpenAI: Groq, OpenRouter, etc.)
     if not base:
         raise RuntimeError("informe a base_url para o provedor 'custom'")
     data = _post(

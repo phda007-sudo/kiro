@@ -93,6 +93,7 @@ SCHEMA = [
         api_key    TEXT NOT NULL,
         enabled    TINYINT NOT NULL DEFAULT 1,
         created_at DOUBLE NOT NULL,
+        updated_at DOUBLE NOT NULL DEFAULT 0,
         UNIQUE KEY uq_provider_name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
@@ -170,7 +171,7 @@ class MySQLDatabase:
         `pattern_hash` (permite trechos longos de arquivos) e tem coluna
         `source`. Idempotente via meta.schema_version.
         """
-        if self._get_meta_int("schema_version", 0) >= 3:
+        if self._get_meta_int("schema_version", 0) >= 4:
             return
 
         if not self._column_exists("knowledge", "source"):
@@ -206,8 +207,15 @@ class MySQLDatabase:
                 "NOT NULL DEFAULT ''"
             )
 
+        # v4: data de atualizacao das IAs externas (persistencia/edicao).
+        if not self._column_exists("ai_providers", "updated_at"):
+            self._exec(
+                "ALTER TABLE ai_providers ADD COLUMN updated_at DOUBLE "
+                "NOT NULL DEFAULT 0"
+            )
+
         with self._cursor() as cur:
-            self._set_meta_int(cur, "schema_version", 3)
+            self._set_meta_int(cur, "schema_version", 4)
         self.conn.commit()
 
     def _query_all(self, sql: str, params: tuple = ()) -> list[dict]:
@@ -350,15 +358,22 @@ class MySQLDatabase:
         api_key: str,
         enabled: bool = True,
     ) -> int:
-        """Cadastra (ou atualiza, pelo nome) um provedor de IA externa."""
+        """Cadastra (ou atualiza, pelo nome) um provedor de IA externa.
+
+        Se `api_key` vier vazio numa ATUALIZACAO, a chave ja salva e mantida
+        (permite editar tipo/modelo/url sem redigitar a chave)."""
+        now = time.time()
         with self._cursor() as cur:
             cur.execute(
                 "INSERT INTO ai_providers(name, kind, base_url, model, api_key, "
-                "enabled, created_at) VALUES(%s, %s, %s, %s, %s, %s, %s) "
+                "enabled, created_at, updated_at) "
+                "VALUES(%s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON DUPLICATE KEY UPDATE kind=VALUES(kind), "
                 "base_url=VALUES(base_url), model=VALUES(model), "
-                "api_key=VALUES(api_key), enabled=VALUES(enabled)",
-                (name, kind, base_url, model, api_key, 1 if enabled else 0, time.time()),
+                "api_key=IF(VALUES(api_key)='', api_key, VALUES(api_key)), "
+                "enabled=VALUES(enabled), updated_at=VALUES(updated_at)",
+                (name, kind, base_url, model, api_key,
+                 1 if enabled else 0, now, now),
             )
             pid = cur.lastrowid
         self.conn.commit()

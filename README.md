@@ -181,9 +181,10 @@ A pagina tem quatro partes:
    texto/comentarios). PDF usa `fpdf2`; DOCX usa `python-docx`; XLSX usa
    `openpyxl`.
 5. **IAs externas (fallback)** — cadastre uma IA externa com o tipo
-   (`openai, anthropic, gemini, custom`), modelo, base URL (opcional) e a
-   **chave de autenticacao**. Marque no chat a opcao *"Perguntar a uma IA
-   externa quando eu nao souber"*: se a IA local nao tiver confianca, ela
+   (`openai, deepseek, anthropic, gemini, custom`), modelo, base URL (opcional)
+   e a **chave de autenticacao**. Os dados (inclusive a chave) ficam **salvos no
+   MySQL** (tabela `ai_providers`) e persistem ao fechar; para editar, repita o
+   apelido e deixe a chave em branco para manter a atual. Quando a IA local nao tiver confianca, ela
    consulta a IA externa, **devolve a resposta e a aprende** (origem
    `ia:<apelido>`), ficando disponivel offline nas proximas vezes. A chave fica
    no seu MySQL e so e enviada ao provedor escolhido.
