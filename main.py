@@ -18,6 +18,7 @@ Comandos especiais (comecam com "/"):
     /buscar texto         -> mostra os itens mais parecidos com pontuacao
     /analisar <caminho>   -> le um arquivo do disco, analisa e absorve para a IA
     /gerar <ext> <assunto>-> gera um arquivo (pdf, py, md, txt...) sobre o assunto
+    /tarefa <descricao>   -> tarefa automatica: cria/edita codigo, instala deps e roda
     /documentos           -> lista os arquivos ja absorvidos
     /provedores           -> lista as IAs externas cadastradas (fallback)
     /esquecer <id>        -> remove um item de conhecimento pelo id
@@ -125,6 +126,26 @@ def comando(brain: Brain, linha: str, ultimo_id: list[int | None]) -> bool:
             with open(filename, "wb") as fh:
                 fh.write(blob)
             print(f"  Gerado: {os.path.abspath(filename)} ({len(blob)} bytes)")
+
+    elif cmd == "/tarefa":
+        if not arg:
+            print("  Use: /tarefa <descricao>   (ex: /tarefa crie um script que soma 2 numeros)")
+        else:
+            r = brain.automate(arg, executar=True)
+            if r.get("erro"):
+                print("  " + r["erro"])
+            else:
+                nome = r.get("arquivo_gerado", "resultado.txt")
+                with open(nome, "w", encoding="utf-8") as fh:
+                    fh.write(r.get("codigo", ""))
+                print(f"  Gerado: {os.path.abspath(nome)} (fonte: {r.get('fonte_codigo')})")
+                dep = r.get("dependencias") or {}
+                if dep.get("instalados"):
+                    print("  Dependencias instaladas: " + ", ".join(dep["instalados"]))
+                ex = r.get("execucao")
+                if ex:
+                    saida = ex.get("stdout") or ex.get("stderr") or "(sem saida)"
+                    print("  Saida da execucao:\n" + saida)
 
     elif cmd == "/documentos":
         docs = brain.documents()

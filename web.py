@@ -208,6 +208,26 @@ INDEX_HTML = """<!doctype html>
     <div id="provs" style="margin-top:10px"></div>
   </section>
 
+  <!-- TAREFA AUTOMATICA -->
+  <section class="card full">
+    <h2>⚙️ Tarefa automatica: analisar / criar / modificar arquivos</h2>
+    <p class="hint">Descreva o que voce quer. A PHDA analisa o arquivo (se enviar),
+       cria/edita o codigo, <b>baixa sozinha as bibliotecas e dependencias</b>
+       necessarias e entrega o resultado pronto para download. Para criar/editar
+       codigo de verdade, cadastre uma IA externa acima. (Binarios .exe/.apk sao
+       analisados; a criacao de .exe e feita a partir de codigo-fonte.)</p>
+    <div class="row">
+      <textarea id="ta-tarefa" placeholder="Ex: crie um script python que renomeia todos os arquivos .txt de uma pasta para minusculo"></textarea>
+    </div>
+    <div class="row">
+      <input type="file" id="ta-arquivo" style="max-width:260px">
+      <input type="text" id="ta-saida" placeholder="extensao de saida (ex: py)" style="max-width:180px">
+      <label class="hint"><input type="checkbox" id="ta-exec"> executar e mostrar a saida</label>
+      <button onclick="tarefa()">Executar tarefa</button>
+    </div>
+    <div class="result" id="res-tarefa"></div>
+  </section>
+
   <!-- DOCUMENTOS -->
   <section class="card full">
     <h2>📚 Documentos absorvidos</h2>
@@ -339,6 +359,53 @@ async function testarProvedor(id) {
   const r = await api('/api/provedores/' + id + '/testar', { method:'POST' });
   if (r.ok) $('res-prov').innerHTML = '<span class="ok">OK: ' + esc((r.resposta||'').slice(0,80)) + '</span>';
   else $('res-prov').innerHTML = '<span class="warn">falhou: ' + esc(r.erro||'') + '</span>';
+}
+
+async function tarefa() {
+  const t = $('ta-tarefa').value.trim();
+  const f = $('ta-arquivo').files[0];
+  if (!t && !f) { $('res-tarefa').innerHTML = '<span class="warn">descreva a tarefa ou envie um arquivo.</span>'; return; }
+  $('res-tarefa').innerHTML = 'trabalhando... (pode baixar dependencias, aguarde)';
+  const fd = new FormData();
+  fd.append('tarefa', t);
+  if (f) fd.append('arquivo', f);
+  if ($('ta-saida').value.trim()) fd.append('saida', $('ta-saida').value.trim());
+  fd.append('executar', $('ta-exec').checked ? '1' : '0');
+  try {
+    const r = await api('/api/tarefa', { method:'POST', body: fd });
+    if (r.erro) { $('res-tarefa').innerHTML = '<span class="warn">' + esc(r.erro) + '</span>'; return; }
+    let html = '';
+    if (r.analise) {
+      html += `<p><b>Analise de ${esc(r.analise.arquivo)}</b> — ${esc(r.analise.tipo)} ` +
+              `(${r.analise.tamanho_bytes} bytes)</p>` +
+              `<pre style="white-space:pre-wrap;background:#0e1322;padding:8px;border-radius:6px;max-height:160px;overflow:auto">` +
+              esc(JSON.stringify(r.analise.detalhes||r.analise.estrutura||{}, null, 1)) + `</pre>`;
+    }
+    if (r.arquivo_gerado) {
+      html += `<p class="ok">Gerado: <b>${esc(r.arquivo_gerado)}</b> ` +
+              `(fonte: ${esc(r.fonte_codigo||'')}) ` +
+              (r.doc_id ? `— <a href="/api/documentos/${r.doc_id}/baixar">baixar</a>` : '') + `</p>`;
+      if (r.sintaxe_ok === false) html += `<p class="warn">sintaxe invalida: ${esc(r.erro_sintaxe||'')}</p>`;
+    }
+    if (r.dependencias) {
+      const d = r.dependencias;
+      html += `<p class="hint">dependencias: instaladas [${(d.instalados||[]).join(', ')||'-'}]` +
+              ((d.falhas&&d.falhas.length)?` · falhas [${d.falhas.join(', ')}]`:'') + `</p>`;
+    }
+    if (r.codigo) {
+      html += `<pre style="white-space:pre-wrap;background:#0e1322;padding:8px;border-radius:6px;max-height:220px;overflow:auto">` +
+              esc(r.codigo) + `</pre>`;
+    }
+    if (r.execucao) {
+      html += `<p><b>Execucao</b> (codigo ${r.execucao.codigo}):</p>` +
+              `<pre style="white-space:pre-wrap;background:#0e1322;padding:8px;border-radius:6px;max-height:180px;overflow:auto">` +
+              esc((r.execucao.stdout||'') + (r.execucao.stderr?('\\n[erros]\\n'+r.execucao.stderr):'')) + `</pre>`;
+    }
+    $('res-tarefa').innerHTML = html || '<span class="ok">concluido.</span>';
+    carregarStats(); carregarDocs();
+  } catch (e) {
+    $('res-tarefa').innerHTML = '<span class="warn">falha: ' + esc(''+e) + '</span>';
+  }
 }
 
 async function enviarArquivo() {
@@ -622,6 +689,30 @@ def api_gerar():
     resp.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
     resp.headers["X-Arquivo"] = filename
     return resp
+
+
+@app.post("/api/tarefa")
+def api_tarefa():
+    tarefa = (request.form.get("tarefa") or "").strip()
+    saida = (request.form.get("saida") or "").strip() or None
+    executar = (request.form.get("executar") or "").strip().lower() in (
+        "1", "true", "on", "sim", "yes"
+    )
+    filename = data = None
+    if "arquivo" in request.files and request.files["arquivo"].filename:
+        f = request.files["arquivo"]
+        filename = f.filename
+        data = f.read()
+    if not tarefa and not filename:
+        return jsonify({"erro": "descreva a tarefa ou envie um arquivo"}), 400
+    try:
+        with _lock:
+            res = get_brain().automate(
+                tarefa, filename=filename, data=data, saida=saida, executar=executar
+            )
+        return jsonify(res)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"erro": f"falha na tarefa: {e}"}), 500
 
 
 def run_server(

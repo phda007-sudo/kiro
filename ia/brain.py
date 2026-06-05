@@ -15,10 +15,25 @@ respostas (o conhecimento e acumulado e reaproveitado).
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 from dataclasses import dataclass
 
-from . import files, generate, providers, storage, text
+from . import automation, files, generate, providers, storage, text
 from .db_mysql import MySQLDatabase
+
+
+def _strip_code_fences(texto: str) -> str:
+    """Remove blocos de markdown (```), caso a IA externa os inclua."""
+    t = texto.strip()
+    if t.startswith("```"):
+        linhas = t.splitlines()
+        if linhas and linhas[0].startswith("```"):
+            linhas = linhas[1:]
+        if linhas and linhas[-1].strip().startswith("```"):
+            linhas = linhas[:-1]
+        t = "\n".join(linhas)
+    return t.strip() + "\n"
 
 
 @dataclass
@@ -472,6 +487,148 @@ class Brain:
         if data is None:
             return None
         return doc["filename"], data
+
+    # --------------------------------------------------- tarefas automaticas
+    def consult_provider(self, prompt: str) -> tuple[str | None, str | None]:
+        """Consulta a primeira IA externa habilitada SEM aprender (uso interno)."""
+        for p in self.db.enabled_providers():
+            try:
+                ans = providers.ask(
+                    p["kind"], p["base_url"], p["model"], p["api_key"],
+                    prompt, timeout=60,
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if ans and ans.strip():
+                return ans.strip(), p["name"]
+        return None, None
+
+    def _gerar_codigo(
+        self, task: str, out_name: str, base_content: str
+    ) -> tuple[str | None, str | None]:
+        """Gera/edita o conteudo do arquivo (IA externa, ou scaffold local)."""
+        if self.has_external():
+            partes = [
+                "Voce e um gerador/editor de codigo experiente.",
+                f"Tarefa: {task}",
+            ]
+            if base_content:
+                partes.append(
+                    "Conteudo atual do arquivo (edite conforme a tarefa):\n"
+                    + base_content[:6000]
+                )
+            partes.append(
+                f"Responda APENAS com o conteudo final do arquivo '{out_name}', "
+                "sem explicacoes e sem blocos de markdown."
+            )
+            ans, nome = self.consult_provider("\n\n".join(partes))
+            if ans:
+                return _strip_code_fences(ans), f"ia:{nome}"
+
+        # Fallback local (sem IA externa): scaffold a partir do conhecimento.
+        if out_name.endswith(".py"):
+            sections = self.compose(task, max_items=6)
+            coment = (
+                "\n".join(f"# {s}" for s in sections)
+                if sections else "# (sem conhecimento previo sobre o tema)"
+            )
+            code = (
+                '"""\n'
+                f"Tarefa: {task}\n"
+                "Gerado pela PHDA CEREBROZ (scaffold local; cadastre uma IA "
+                "externa para geracao/edicao completa).\n"
+                '"""\n\n'
+                f"{coment}\n\n\n"
+                "def main():\n"
+                f"    # TODO: implementar: {task}\n"
+                f"    print({task!r})\n\n\n"
+                'if __name__ == "__main__":\n'
+                "    main()\n"
+            )
+            return code, "local"
+        sections = self.compose(task, max_items=8)
+        if sections:
+            return "\n\n".join(sections) + "\n", "local"
+        return None, None
+
+    def automate(
+        self,
+        task: str,
+        filename: str | None = None,
+        data: bytes | None = None,
+        saida: str | None = None,
+        executar: bool = False,
+    ) -> dict:
+        """
+        Executa uma tarefa automatica com arquivos:
+          - analisa o arquivo enviado (qualquer tipo);
+          - cria/edita o codigo pedido (IA externa configurada, ou conhecimento);
+          - BAIXA sozinha as dependencias Python necessarias;
+          - opcionalmente executa o resultado;
+          - guarda o resultado no FTPS para download.
+        """
+        task = (task or "").strip()
+        if not task and not (data and filename):
+            raise ValueError("Descreva a tarefa.")
+
+        result: dict = {"tarefa": task}
+        base_content = ""
+        in_ext = ""
+
+        if data is not None and filename:
+            analise = automation.inspect(filename, data)
+            result["analise"] = analise
+            in_ext = analise.get("ext", "")
+            rp_in = self.storage.store(filename, data) or ""
+            self.db.add_document(
+                filename, in_ext, len(data), 0, "tarefa-entrada",
+                analise.get("tipo", ""), rp_in,
+            )
+            if analise.get("editavel"):
+                base_content = analise.get("conteudo", "")
+
+        out_ext = (saida or in_ext or "py").lower().lstrip(".")
+        if filename and base_content and not saida:
+            out_name = os.path.basename(filename)
+        else:
+            out_name = f"{generate.slugify(task or filename or 'resultado')}.{out_ext}"
+
+        codigo, fonte = self._gerar_codigo(task, out_name, base_content)
+        result["fonte_codigo"] = fonte
+        if codigo is None:
+            result["erro"] = (
+                "Nenhuma IA externa configurada e sem conhecimento suficiente "
+                "para gerar. Cadastre uma IA externa (painel de IAs externas)."
+            )
+            return result
+        result["codigo"] = codigo
+
+        if out_ext == "py":
+            estrutura = automation.py_structure(codigo)
+            result["sintaxe_ok"] = estrutura.get("sintaxe_ok")
+            if not estrutura.get("sintaxe_ok"):
+                result["erro_sintaxe"] = estrutura.get("erro_sintaxe")
+            result["estrutura"] = {
+                k: estrutura.get(k) for k in ("funcoes", "classes", "imports")
+            }
+            result["dependencias"] = automation.install_dependencies(codigo)
+            if executar and estrutura.get("sintaxe_ok"):
+                with tempfile.TemporaryDirectory() as td:
+                    p = os.path.join(td, "script.py")
+                    with open(p, "w", encoding="utf-8") as fh:
+                        fh.write(codigo)
+                    result["execucao"] = automation.run_python(p)
+
+        blob = codigo.encode("utf-8")
+        rp_out = self.storage.store(out_name, blob) or ""
+        doc_id = self.db.add_document(
+            out_name, out_ext, len(blob), 0, "tarefa-saida",
+            f"tarefa: {task[:200]}", rp_out,
+        )
+        result["arquivo_gerado"] = out_name
+        result["doc_id"] = doc_id
+        result["ftps"] = bool(rp_out)
+        return result
 
     def stats(self) -> dict:
         return self.db.stats()

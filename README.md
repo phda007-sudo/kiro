@@ -46,6 +46,7 @@ ia/
   storage.py      # armazenamento dos arquivos em servidor FTPS
   files.py        # extracao e analise de arquivos (txt, pdf, docx, xlsx, ...)
   generate.py     # gera arquivos (pdf, py, md, docx, ...) sobre um assunto
+  automation.py   # tarefas automaticas: analisar/criar/editar arquivos + deps
   providers.py    # consulta a IAs externas (OpenAI/Anthropic/Gemini/custom)
   brain.py        # TF-IDF + cosseno: aprende, busca, responde, gera e absorve
 main.py           # PHDA CEREBROZ - interface de chat no terminal
@@ -186,6 +187,21 @@ A pagina tem quatro partes:
    consulta a IA externa, **devolve a resposta e a aprende** (origem
    `ia:<apelido>`), ficando disponivel offline nas proximas vezes. A chave fica
    no seu MySQL e so e enviada ao provedor escolhido.
+6. **Tarefa automatica (analisar / criar / modificar arquivos)** — descreva o
+   que quer e (opcionalmente) envie um arquivo. A PHDA:
+   - **analisa** qualquer arquivo: `.py` (funcoes/classes/imports via AST),
+     `.exe/.dll` (cabecalho PE: arquitetura, secoes), `.apk/.jar/.zip` (conteudo
+     do pacote, manifesto Android), e detecta tipo de outros binarios;
+   - **cria/edita codigo** automaticamente (com a IA externa configurada; sem
+     ela, gera um scaffold a partir do conhecimento);
+   - **baixa sozinha as bibliotecas/dependencias** Python necessarias (pip);
+   - opcionalmente **executa** e mostra a saida;
+   - guarda o resultado no FTPS para **download**.
+
+   Limites de seguranca: a PHDA **analisa** binarios `.exe/.apk`, mas nao
+   reescreve binarios ja compilados nem baixa/roda programas fora do escopo da
+   tarefa. Para "criar um .exe", o caminho e a partir de codigo-fonte
+   (empacotamento com PyInstaller).
 
 Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 "Documentos absorvidos".
@@ -199,6 +215,7 @@ Os documentos absorvidos (por upload ou por outra IA) aparecem na lista
 | POST | `/api/upload` | arquivo (multipart; campo opcional `ia` marca a origem) -> analisa e alimenta a IA |
 | POST | `/api/alimentar` | `{arquivo, conteudo, ia}` -> absorve info (texto) de outra IA |
 | POST | `/api/gerar` | `{assunto, formato}` -> gera e devolve o arquivo (download) |
+| POST | `/api/tarefa` | `tarefa` (+arquivo opcional, `saida`, `executar`) -> analisa/cria/edita, instala deps e executa |
 | GET | `/api/provedores` | lista as IAs externas (chave mascarada) |
 | POST | `/api/provedores` | `{name, kind, base_url, model, api_key}` -> cadastra IA externa |
 | DELETE | `/api/provedores/<id>` | remove a IA externa |
@@ -263,6 +280,7 @@ ia.close()
 | `/buscar texto` | mostra os itens mais parecidos |
 | `/analisar <caminho>` | le um arquivo do disco, analisa e absorve |
 | `/gerar <ext> <assunto>` | gera um arquivo (pdf, py, md, txt...) sobre o assunto |
+| `/tarefa <descricao>` | tarefa automatica: cria/edita codigo, instala deps e executa |
 | `/documentos` | lista os arquivos absorvidos |
 | `/provedores` | lista as IAs externas (fallback) cadastradas |
 | `/esquecer <id>` | remove um item de conhecimento |
