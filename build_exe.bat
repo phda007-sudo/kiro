@@ -66,7 +66,7 @@ echo [PASSO 2/4] Instalando dependencias do projeto (pode demorar alguns minutos
 set "PKGS=pyinstaller ttkbootstrap Pillow reportlab fpdf2 pyserial bcrypt cryptography numpy qrcode openpyxl psutil flask flask-cors flask-socketio pywin32"
 for %%P in (%PKGS%) do (
     echo    - Instalando %%P ...
-    python -m pip install --upgrade %%P >>"%LOG%" 2>&1
+    python -m pip install --prefer-binary %%P >>"%LOG%" 2>&1
     if errorlevel 1 echo      [AVISO] Falha ao instalar %%P  ^(detalhes em %LOG%^)
 )
 
@@ -75,7 +75,7 @@ echo.
 echo [PASSO 2b] Dependencias opcionais (USB / Bluetooth)...
 for %%P in (pyusb bleak) do (
     echo    - Instalando %%P (opcional) ...
-    python -m pip install --upgrade %%P >>"%LOG%" 2>&1
+    python -m pip install --prefer-binary %%P >>"%LOG%" 2>&1
 )
 
 REM ------ 4) Limpa builds anteriores ------------------------------------------
