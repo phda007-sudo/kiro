@@ -43,11 +43,27 @@ echo [3/5] Instalando dependencias (pode demorar na primeira vez)...
     "flask>=3.0" "flask-cors>=4.0" "flask-socketio>=5.3" "pywin32>=306" --prefer-binary
 
 REM 4) Gera o icone comercial (se ainda nao existir)
-if not exist "farma_quantum.ico" (
-    echo [4/5] Gerando icone comercial farma_quantum.ico ...
-    %PY% tools\make_icon.py
-) else (
+if exist "farma_quantum.ico" (
     echo [4/5] Icone farma_quantum.ico ja existe.
+) else (
+    echo [4/5] Gerando icone comercial farma_quantum.ico ...
+    set "ICON_SCRIPT="
+    if exist "tools\make_icon.py" set "ICON_SCRIPT=tools\make_icon.py"
+    if exist "make_icon.py" set "ICON_SCRIPT=make_icon.py"
+    if defined ICON_SCRIPT (
+        %PY% "!ICON_SCRIPT!"
+    ) else (
+        echo [AVISO] make_icon.py nao encontrado; o .exe sera gerado sem icone.
+    )
+)
+
+REM 4b) Confere se o pywin32 ficou instalado (precisa estar p/ entrar no .exe)
+%PY% -c "import win32print" 2>nul && (
+    echo [OK] pywin32 instalado: sera embutido no .exe.
+) || (
+    echo [AVISO] pywin32 nao importou. Tentando instalar novamente...
+    %PY% -m pip install --upgrade "pywin32>=306" --prefer-binary
+    %PY% -c "import win32print" 2>nul || echo [ATENCAO] pywin32 ainda indisponivel; impressao do Windows pode falhar.
 )
 
 REM 5) Empacota o .EXE com o PyInstaller usando o spec

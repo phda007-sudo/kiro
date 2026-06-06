@@ -18,15 +18,33 @@ block_cipher = None
 # Permite trocar o nome do script-fonte via variavel de ambiente
 # (ex.: set FQ_MAIN=Quantum_Farmacia1.py) sem editar este arquivo.
 MAIN_SCRIPT = os.environ.get("FQ_MAIN", "Quantum_Farmacia.py")
-ICON_FILE = "farma_quantum.ico"
+
+# Resolve o icone ao lado do .spec (e nao no diretorio atual), evitando o erro
+# "Icon input file ... not found" quando se compila de outra pasta.
+try:
+    _HERE = SPECPATH  # diretorio do .spec (injetado pelo PyInstaller)
+except NameError:
+    _HERE = os.getcwd()
+ICON_FILE = None
+for _cand in [os.path.join(_HERE, "farma_quantum.ico"),
+              os.path.join(os.getcwd(), "farma_quantum.ico")]:
+    if os.path.exists(_cand):
+        ICON_FILE = _cand
+        break
+if ICON_FILE is None:
+    print("=" * 70)
+    print("[AVISO] farma_quantum.ico nao encontrado ao lado do .spec.")
+    print("        O .exe sera gerado SEM icone personalizado.")
+    print("        Coloque farma_quantum.ico na mesma pasta do .spec (ou rode")
+    print("        'python tools/make_icon.py') e compile de novo.")
+    print("=" * 70)
 
 datas = []
 binaries = []
 hiddenimports = []
 
-# Inclui o proprio icone dentro do .exe (util para definir o icone da janela
-# em runtime, se desejado).
-if os.path.exists(ICON_FILE):
+# Inclui o proprio icone dentro do .exe (util para o icone da janela em runtime).
+if ICON_FILE:
     datas.append((ICON_FILE, "."))
 
 # Coleta COMPLETA (modulos + dados) das libs que costumam quebrar em .exe.
@@ -77,23 +95,40 @@ except Exception:
 for _opt in ["psutil", "bleak"]:
     hiddenimports.append(_opt)
 
-# pywin32 (impressao termica/spooler e APIs do Windows). Garante que os
-# submodulos usados sejam incluidos no .exe.
-for _w in ["win32print", "win32api", "win32con", "pywintypes", "pythoncom",
-           "win32gui", "win32ui", "win32file", "win32event", "winerror",
-           "win32com", "win32com.client"]:
-    hiddenimports.append(_w)
+# pywin32 (impressao termica/spooler e APIs do Windows). So adiciona aos
+# hiddenimports se o pywin32 estiver REALMENTE instalado neste Python -
+# caso contrario, nada disso entra no .exe.
 try:
-    hiddenimports += collect_submodules("win32com")
+    import win32print  # noqa: F401
+    _HAS_PYWIN32 = True
 except Exception:
-    pass
-try:
-    d, b, h = collect_all("win32com")
-    datas += d
-    binaries += b
-    hiddenimports += h
-except Exception:
-    pass
+    _HAS_PYWIN32 = False
+
+if _HAS_PYWIN32:
+    for _w in ["win32print", "win32api", "win32con", "pywintypes", "pythoncom",
+               "win32gui", "win32ui", "win32file", "win32event", "winerror",
+               "win32com", "win32com.client"]:
+        hiddenimports.append(_w)
+    try:
+        hiddenimports += collect_submodules("win32com")
+    except Exception:
+        pass
+    try:
+        d, b, h = collect_all("win32com")
+        datas += d
+        binaries += b
+        hiddenimports += h
+    except Exception:
+        pass
+    print("[OK] pywin32 detectado: sera embutido no .exe.")
+else:
+    print("=" * 70)
+    print("[AVISO] pywin32 NAO esta instalado neste Python!")
+    print("        Ele NAO sera embutido no .exe (impressao termica/spooler")
+    print("        do Windows pode falhar). Instale antes de compilar:")
+    print("            pip install pywin32")
+    print("        Dica: use o build_exe.bat, que ja instala tudo.")
+    print("=" * 70)
 
 a = Analysis(
     [MAIN_SCRIPT],
