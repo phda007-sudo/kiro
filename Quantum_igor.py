@@ -21912,6 +21912,7 @@ def _mysql_load_config():
         "taxa_garcom_ativa": False,
         "garcom_obrigatorio_pagamento": False,
         "modo_supermercado": False,
+        "dias_alerta_validade": 15,
         "pagamento_mostrar_total_venda": True,
         "pagamento_mostrar_cliente": True,
         "pagamento_mostrar_entrega": True,
@@ -21921,7 +21922,7 @@ def _mysql_load_config():
     for row in rows:
         chave = row['chave']
         valor = row['valor']
-        if chave in ['last_coupon_number', 'last_comanda_number', 'atacado_qtd_minima']:
+        if chave in ['last_coupon_number', 'last_comanda_number', 'atacado_qtd_minima', 'dias_alerta_validade']:
             result[chave] = int(valor) if valor else 0
         elif chave in [
             'atacado_habilitado',
@@ -27927,6 +27928,8 @@ DEFAULT_CONFIG = {
     "taxa_garcom_ativa": False,
     "garcom_obrigatorio_pagamento": False,
     "modo_supermercado": False,
+    # Dias de antecedência para alertar produtos próximos do vencimento
+    "dias_alerta_validade": 15,
     # Visibilidade dos itens do topo da tela de Forma de Pagamento
     "pagamento_mostrar_total_venda": True,
     "pagamento_mostrar_cliente": True,
@@ -36472,7 +36475,11 @@ class EntradaNotasWindow(tk.Toplevel):
                 lote = self.lote_var.get().strip()
                 validade = self.validade_var.get().strip()
                 if validade:
-                    status_validade = calcular_status_validade(validade)
+                    try:
+                        _dias_alerta_cfg = int(getattr(self.parent_app, 'config_data', {}).get("dias_alerta_validade", 15))
+                    except (ValueError, TypeError, AttributeError):
+                        _dias_alerta_cfg = 15
+                    status_validade = calcular_status_validade(validade, _dias_alerta_cfg)
                     if status_validade['status'] == 'invalido':
                         messagebox.showerror("Validade Inválida",
                                              "Informe a validade no formato DD/MM/AAAA.", parent=self)
@@ -43034,14 +43041,22 @@ class PDVSuperApp:
 
     
     
-    def _verificar_validades_proximas(self, dias_alerta=15):
+    def _verificar_validades_proximas(self, dias_alerta=None):
         """Verifica produtos com validade controlada e alerta sobre vencimentos.
 
         Produtos sem validade preenchida (controle não utilizado na entrada de nota)
         são ignorados. Exibe um resumo com itens vencidos, que vencem hoje
         (último dia) e os próximos do vencimento (até `dias_alerta` dias antes).
+
+        O prazo de alerta (`dias_alerta`) é configurável em Configurações
+        ("Controle de Validade de Produtos"). Se não informado, usa o valor salvo.
         """
         try:
+            if dias_alerta is None:
+                try:
+                    dias_alerta = int(self.config_data.get("dias_alerta_validade", 15))
+                except (ValueError, TypeError, AttributeError):
+                    dias_alerta = 15
             produtos = getattr(self, 'products', {}) or {}
             vencidos, ultimo_dia, proximos = [], [], []
 
@@ -46798,6 +46813,32 @@ Formatos suportados: Excel (.xlsx, .xls) e CSV (.csv)"""
             justify=tk.LEFT
         ).pack(anchor=tk.W, padx=8, pady=(0, 6))
 
+        # ===== OPÇÃO: CONTROLE DE VALIDADE DE PRODUTOS =====
+        validade_frame = ttk.LabelFrame(win, text="Controle de Validade de Produtos")
+        validade_frame.pack(pady=8, padx=10, fill=tk.X)
+        try:
+            dias_alerta_inicial = int(self.config_data.get("dias_alerta_validade", 15))
+        except (ValueError, TypeError):
+            dias_alerta_inicial = 15
+        dias_alerta_validade_var = tk.StringVar(value=str(dias_alerta_inicial))
+        validade_linha = ttk.Frame(validade_frame)
+        validade_linha.pack(anchor=tk.W, padx=8, pady=(6, 2))
+        ttk.Label(validade_linha, text="Alertar produtos a vencer com antecedência de:").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            validade_linha, from_=1, to=365, width=6,
+            textvariable=dias_alerta_validade_var
+        ).pack(side=tk.LEFT, padx=(6, 4))
+        ttk.Label(validade_linha, text="dia(s)").pack(side=tk.LEFT)
+        ttk.Label(
+            validade_frame,
+            text="Define quantos dias antes do vencimento o sistema avisa que o produto está perto de vencer. "
+                 "No dia do vencimento o aviso é de 'último dia' e, após a data, de 'produto vencido'. "
+                 "Aplica-se apenas a produtos com Lote/Validade informados na Entrada de Notas.",
+            foreground="gray",
+            wraplength=1100,
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, padx=8, pady=(0, 6))
+
         # ===== OPÇÃO: TAXA DO GARÇOM / SERVIÇO =====
         taxa_garcom_frame = ttk.LabelFrame(win, text="Taxa do Garçom / Serviço")
         taxa_garcom_frame.pack(pady=8, padx=10, fill=tk.X)
@@ -46832,12 +46873,22 @@ Formatos suportados: Excel (.xlsx, .xls) e CSV (.csv)"""
                 messagebox.showerror("Erro", "Número do cupom inválido. Deve ser um número inteiro.", parent=win)
                 return
 
+            # Valida os dias de alerta de validade
+            try:
+                dias_alerta_validade = int(dias_alerta_validade_var.get())
+                if dias_alerta_validade < 1 or dias_alerta_validade > 365:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Erro", "Dias de alerta de validade inválido. Informe um número inteiro entre 1 e 365.", parent=win)
+                return
+
             # Salva as novas opções de configuração
             modo_supermercado_anterior = cfg_bool(self.config_data.get("modo_supermercado", False), False)
             self.config_data["vendedor_obrigatorio"] = vendedor_obrig_var.get()
             self.config_data["imprimir_canhoto_loja"] = canhoto_loja_var.get()
             self.config_data["acrescentar_taxa_cartao_pagamento"] = taxa_cartao_var.get()
             self.config_data["modo_supermercado"] = modo_supermercado_var.get()
+            self.config_data["dias_alerta_validade"] = dias_alerta_validade
             self.config_data["taxa_garcom_ativa"] = taxa_garcom_var.get()
             self.config_data["garcom_obrigatorio_pagamento"] = garcom_obrigatorio_var.get()
             self.config_data["pagamento_mostrar_total_venda"] = pagamento_mostrar_total_venda_var.get()
