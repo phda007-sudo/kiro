@@ -40,7 +40,7 @@ echo [3/5] Instalando dependencias (pode demorar na primeira vez)...
 %PY% -m pip install --upgrade pyinstaller pillow ^
     ttkbootstrap "mysql-connector-python==8.4.0" "reportlab>=4.0" "fpdf2>=2.7" ^
     "openpyxl>=3.1" "qrcode>=7.4" "pyserial>=3.5" "psutil==5.9.8" ^
-    "flask>=3.0" "flask-cors>=4.0" "flask-socketio>=5.3" --prefer-binary
+    "flask>=3.0" "flask-cors>=4.0" "flask-socketio>=5.3" "pywin32>=306" --prefer-binary
 
 REM 4) Gera o icone comercial (se ainda nao existir)
 if not exist "farma_quantum.ico" (

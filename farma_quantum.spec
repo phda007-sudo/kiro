@@ -74,8 +74,26 @@ except Exception:
     pass
 
 # Modulos opcionais (nao falha se nao estiverem instalados)
-for _opt in ["psutil", "bleak", "win32print", "win32api", "win32con", "pywintypes"]:
+for _opt in ["psutil", "bleak"]:
     hiddenimports.append(_opt)
+
+# pywin32 (impressao termica/spooler e APIs do Windows). Garante que os
+# submodulos usados sejam incluidos no .exe.
+for _w in ["win32print", "win32api", "win32con", "pywintypes", "pythoncom",
+           "win32gui", "win32ui", "win32file", "win32event", "winerror",
+           "win32com", "win32com.client"]:
+    hiddenimports.append(_w)
+try:
+    hiddenimports += collect_submodules("win32com")
+except Exception:
+    pass
+try:
+    d, b, h = collect_all("win32com")
+    datas += d
+    binaries += b
+    hiddenimports += h
+except Exception:
+    pass
 
 a = Analysis(
     [MAIN_SCRIPT],
