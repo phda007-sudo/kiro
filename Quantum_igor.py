@@ -36116,6 +36116,43 @@ class LabelPrintConfigWindow(tk.Toplevel):
         except tk.TclError:
             messagebox.showerror("Erro", "Quantidade inválida.", parent=self)
 
+def calcular_status_validade(validade_str, dias_alerta=15):
+    """Calcula o status de validade de um produto a partir de uma data DD/MM/AAAA.
+
+    Args:
+        validade_str: Data de validade no formato 'DD/MM/AAAA' (ou vazio/None).
+        dias_alerta: Quantos dias antes do vencimento o produto entra em alerta (padrão 15).
+
+    Returns:
+        dict com as chaves:
+          - 'status': 'sem_controle' | 'invalido' | 'ok' | 'proximo' | 'ultimo_dia' | 'vencido'
+          - 'dias': dias restantes até o vencimento (negativo se já vencido) ou None
+          - 'mensagem': texto descritivo para exibir ao usuário
+    """
+    if not validade_str or not str(validade_str).strip():
+        return {'status': 'sem_controle', 'dias': None, 'mensagem': ''}
+    try:
+        venc = datetime.datetime.strptime(str(validade_str).strip(), '%d/%m/%Y').date()
+    except (ValueError, TypeError):
+        return {'status': 'invalido', 'dias': None,
+                'mensagem': 'Data de validade inválida. Use o formato DD/MM/AAAA.'}
+
+    hoje = datetime.date.today()
+    dias = (venc - hoje).days
+
+    if dias < 0:
+        return {'status': 'vencido', 'dias': dias,
+                'mensagem': f'⛔ PRODUTO VENCIDO há {abs(dias)} dia(s) (venceu em {validade_str}).'}
+    if dias == 0:
+        return {'status': 'ultimo_dia', 'dias': 0,
+                'mensagem': f'⚠️ ÚLTIMO DIA DE VALIDADE! O produto vence hoje ({validade_str}).'}
+    if dias <= dias_alerta:
+        return {'status': 'proximo', 'dias': dias,
+                'mensagem': f'🔔 Produto perto de vencer: faltam {dias} dia(s) (vence em {validade_str}).'}
+    return {'status': 'ok', 'dias': dias,
+            'mensagem': f'✅ Validade OK: faltam {dias} dia(s) (vence em {validade_str}).'}
+
+
 class EntradaNotasWindow(tk.Toplevel):
     def __init__(self, master, parent_app):
         super().__init__(master)
@@ -36136,6 +36173,10 @@ class EntradaNotasWindow(tk.Toplevel):
         self.custo_var = tk.StringVar()
         self.total_item_var = tk.StringVar(value="R$ 0,00")
         self.total_nota_var = tk.StringVar(value="R$ 0,00")
+        # Controle opcional de Lote e Validade (habilitado via checkbox)
+        self.controlar_validade_var = tk.BooleanVar(value=False)
+        self.lote_var = tk.StringVar()
+        self.validade_var = tk.StringVar()
         self.nota_fiscal_var = tk.StringVar(value=str(get_next_nota_entrada_number()))
         # Data da Nota com Calendário
         self.condicao_pagamento_var = tk.StringVar(value="À Vista")
@@ -36208,7 +36249,35 @@ class EntradaNotasWindow(tk.Toplevel):
         ttk.Label(detalhes_frame, text="Total Item:").grid(row=0, column=4, sticky="w", padx=5)
         ttk.Label(detalhes_frame, textvariable=self.total_item_var, foreground="blue", font=("Segoe UI", 10, "bold")).grid(row=0, column=5, sticky="w", padx=5)
         
-        ttk.Button(itens_frame, text="Adicionar Item (F2)", underline=1, command=self._adicionar_item_a_nota, bootstyle="success").grid(row=2, column=0, columnspan=2, sticky="ew", pady=10, padx=5)
+        # --- Controle opcional de Lote e Validade ---
+        lote_frame = ttk.Frame(itens_frame)
+        lote_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0), padx=5)
+        lote_frame.columnconfigure(2, weight=1)
+        lote_frame.columnconfigure(4, weight=1)
+
+        self.chk_validade = ttk.Checkbutton(
+            lote_frame,
+            text="Controlar Lote e Validade deste produto",
+            variable=self.controlar_validade_var,
+            command=self._toggle_lote_validade,
+            bootstyle="primary-round-toggle"
+        )
+        self.chk_validade.grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 4))
+
+        ttk.Label(lote_frame, text="Lote:").grid(row=1, column=0, sticky="w", padx=(0, 5))
+        self.lote_entry = ttk.Entry(lote_frame, textvariable=self.lote_var, width=18, state="disabled")
+        self.lote_entry.grid(row=1, column=1, sticky="w", padx=(0, 15))
+
+        ttk.Label(lote_frame, text="Validade (DD/MM/AAAA):").grid(row=1, column=2, sticky="w", padx=(0, 5))
+        self.validade_entry = ttk.Entry(lote_frame, textvariable=self.validade_var, width=15, state="disabled")
+        self.validade_entry.grid(row=1, column=3, sticky="w", padx=(0, 5))
+        ttk.Label(
+            lote_frame,
+            text="Alerta automático 15 dias antes do vencimento.",
+            font=("Segoe UI", 8), foreground="#666666"
+        ).grid(row=1, column=4, sticky="w", padx=(5, 0))
+
+        ttk.Button(itens_frame, text="Adicionar Item (F2)", underline=1, command=self._adicionar_item_a_nota, bootstyle="success").grid(row=3, column=0, columnspan=2, sticky="ew", pady=10, padx=5)
 
         # Frame da Lista de Itens (Direita e Expansível)
         lista_frame = ttk.Labelframe(main_frame, text="Itens da Nota", padding="10")
@@ -36217,13 +36286,15 @@ class EntradaNotasWindow(tk.Toplevel):
         lista_frame.rowconfigure(0, weight=1)
 
         # Treeview para Itens da Nota
-        self.tree_itens = ttk.Treeview(lista_frame, columns=('id', 'codigo_barras', 'nome', 'qtd', 'custo', 'total'), show='headings', selectmode='browse')
+        self.tree_itens = ttk.Treeview(lista_frame, columns=('id', 'codigo_barras', 'nome', 'qtd', 'custo', 'total', 'lote', 'validade'), show='headings', selectmode='browse')
         self.tree_itens.heading('id', text='ID', anchor=tk.W)
         self.tree_itens.heading('codigo_barras', text='Cód. Barras', anchor=tk.W)
         self.tree_itens.heading('nome', text='Produto', anchor=tk.W)
         self.tree_itens.heading('qtd', text='Qtd', anchor=tk.CENTER)
         self.tree_itens.heading('custo', text='Custo Unit.', anchor=tk.E)
         self.tree_itens.heading('total', text='Total', anchor=tk.E)
+        self.tree_itens.heading('lote', text='Lote', anchor=tk.W)
+        self.tree_itens.heading('validade', text='Validade', anchor=tk.CENTER)
         
         self.tree_itens.column('id', width=50, stretch=tk.NO)
         self.tree_itens.column('codigo_barras', width=120, stretch=tk.NO)
@@ -36231,6 +36302,8 @@ class EntradaNotasWindow(tk.Toplevel):
         self.tree_itens.column('qtd', width=70, anchor=tk.CENTER, stretch=tk.NO)
         self.tree_itens.column('custo', width=100, anchor=tk.E, stretch=tk.NO)
         self.tree_itens.column('total', width=120, anchor=tk.E, stretch=tk.NO)
+        self.tree_itens.column('lote', width=100, anchor=tk.W, stretch=tk.NO)
+        self.tree_itens.column('validade', width=100, anchor=tk.CENTER, stretch=tk.NO)
         
         self.tree_itens.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
@@ -36347,6 +36420,25 @@ class EntradaNotasWindow(tk.Toplevel):
         except Exception:
             self.total_item_var.set("R$ 0,00")
 
+    def _toggle_lote_validade(self):
+        """Habilita ou desabilita os campos de Lote e Validade conforme o checkbox.
+
+        Quando o checkbox está desmarcado, o controle de validade NÃO é usado
+        para o produto (os campos ficam desabilitados e são ignorados).
+        """
+        if self.controlar_validade_var.get():
+            self.lote_entry.config(state="normal")
+            self.validade_entry.config(state="normal")
+            try:
+                self.validade_entry.focus()
+            except Exception:
+                pass
+        else:
+            self.lote_var.set("")
+            self.validade_var.set("")
+            self.lote_entry.config(state="disabled")
+            self.validade_entry.config(state="disabled")
+
     def _adicionar_item_a_nota(self):
         produto_str = self.produto_var.get().strip()
         qtd_str = self.qtd_var.get().strip()
@@ -36371,29 +36463,65 @@ class EntradaNotasWindow(tk.Toplevel):
             total = qtd * custo
             
             produto_nome = self.products[produto_id]['nome']
-            
+
+            # Captura de Lote e Validade (somente se o controle estiver habilitado)
+            lote = ""
+            validade = ""
+            status_validade = None
+            if self.controlar_validade_var.get():
+                lote = self.lote_var.get().strip()
+                validade = self.validade_var.get().strip()
+                if validade:
+                    status_validade = calcular_status_validade(validade)
+                    if status_validade['status'] == 'invalido':
+                        messagebox.showerror("Validade Inválida",
+                                             "Informe a validade no formato DD/MM/AAAA.", parent=self)
+                        self.validade_entry.focus()
+                        return
+
             if produto_id in self.carrinho_nota:
                 # Atualiza item existente
                 self.carrinho_nota[produto_id]['qtd'] += qtd
                 self.carrinho_nota[produto_id]['custo'] = custo # Mantém o último custo unitário
                 self.carrinho_nota[produto_id]['total'] += total
+                # Mantém o último lote/validade informado, se houver
+                if self.controlar_validade_var.get():
+                    self.carrinho_nota[produto_id]['lote'] = lote
+                    self.carrinho_nota[produto_id]['validade'] = validade
             else:
                 # Adiciona novo item
                 self.carrinho_nota[produto_id] = {
                     'nome': produto_nome,
                     'qtd': qtd,
                     'custo': custo,
-                    'total': total
+                    'total': total,
+                    'lote': lote,
+                    'validade': validade
                 }
             
             self._atualizar_treeview()
             self._atualizar_total_nota()
+
+            # Alerta imediato sobre a situação da validade informada
+            if status_validade and status_validade['status'] in ('proximo', 'ultimo_dia', 'vencido'):
+                titulo_alerta = {
+                    'proximo': "Produto Perto de Vencer",
+                    'ultimo_dia': "Último Dia de Validade",
+                    'vencido': "Produto Vencido"
+                }[status_validade['status']]
+                msg_alerta = f"{produto_nome}\n\n{status_validade['mensagem']}"
+                if status_validade['status'] == 'vencido':
+                    messagebox.showerror(titulo_alerta, msg_alerta, parent=self)
+                else:
+                    messagebox.showwarning(titulo_alerta, msg_alerta, parent=self)
             
             # Limpa campos para próxima entrada
             self.produto_var.set("")
             self.qtd_var.set("1")
             self.custo_var.set("")
             self.total_item_var.set("R$ 0,00")
+            self.lote_var.set("")
+            self.validade_var.set("")
             self.produto_entry.focus()
 
         except ValueError as e:
@@ -36414,7 +36542,9 @@ class EntradaNotasWindow(tk.Toplevel):
                 item['nome'],
                 format_br_float(item['qtd'], 3),
                 format_br_float(item['custo'], 2),
-                format_br_currency(item['total'])
+                format_br_currency(item['total']),
+                item.get('lote', ''),
+                item.get('validade', '')
             ))
 
     def _atualizar_total_nota(self):
@@ -36481,6 +36611,24 @@ class EntradaNotasWindow(tk.Toplevel):
                 
                 # Atualiza o preço de custo (preco_compra)
                 produto['preco_compra'] = format_br_float(item['custo'], 2)
+
+                # Atualiza Lote e Validade quando o controle foi usado para o item
+                validade_item = item.get('validade', '')
+                if validade_item:
+                    produto['validade'] = validade_item
+                    produto['lote'] = item.get('lote', '')
+                    # Mantém um histórico de lotes recebidos para este produto
+                    lotes_hist = produto.get('lotes')
+                    if not isinstance(lotes_hist, list):
+                        lotes_hist = []
+                    lotes_hist.append({
+                        'lote': item.get('lote', ''),
+                        'validade': validade_item,
+                        'qtd': format_br_float(item['qtd'], 3),
+                        'data_entrada': datetime.datetime.now().strftime('%d/%m/%Y'),
+                        'nota_fiscal': nota_fiscal
+                    })
+                    produto['lotes'] = lotes_hist
                 
                 # Opcional: Atualizar preço de venda (se for o caso, pode ser uma opção)
                 # produto['preco_venda'] = ...
@@ -42878,8 +43026,76 @@ class PDVSuperApp:
         except Exception as e:
             print(f"[ANIVERSÁRIOS] Não foi possível iniciar o monitor automático: {e}")
 
+        # Verifica produtos próximos do vencimento/vencidos ao iniciar
+        try:
+            self.root.after(2500, self._verificar_validades_proximas)
+        except Exception as e:
+            print(f"[VALIDADE] Não foi possível agendar verificação de validades: {e}")
+
     
     
+    def _verificar_validades_proximas(self, dias_alerta=15):
+        """Verifica produtos com validade controlada e alerta sobre vencimentos.
+
+        Produtos sem validade preenchida (controle não utilizado na entrada de nota)
+        são ignorados. Exibe um resumo com itens vencidos, que vencem hoje
+        (último dia) e os próximos do vencimento (até `dias_alerta` dias antes).
+        """
+        try:
+            produtos = getattr(self, 'products', {}) or {}
+            vencidos, ultimo_dia, proximos = [], [], []
+
+            for pid, pdata in produtos.items():
+                if not isinstance(pdata, dict):
+                    continue
+                validade = pdata.get('validade', '')
+                if not validade:
+                    continue
+                status = calcular_status_validade(validade, dias_alerta)
+                nome = pdata.get('nome', f'Produto {pid}')
+                if status['status'] == 'vencido':
+                    vencidos.append((nome, validade, status['dias']))
+                elif status['status'] == 'ultimo_dia':
+                    ultimo_dia.append((nome, validade))
+                elif status['status'] == 'proximo':
+                    proximos.append((nome, validade, status['dias']))
+
+            if not (vencidos or ultimo_dia or proximos):
+                return
+
+            linhas = []
+            if vencidos:
+                linhas.append("⛔ VENCIDOS:")
+                for nome, val, dias in sorted(vencidos, key=lambda x: x[2]):
+                    linhas.append(f"   • {nome} — venceu em {val} (há {abs(dias)} dia(s))")
+            if ultimo_dia:
+                if linhas:
+                    linhas.append("")
+                linhas.append("⚠️ VENCEM HOJE (ÚLTIMO DIA):")
+                for nome, val in ultimo_dia:
+                    linhas.append(f"   • {nome} — vence hoje ({val})")
+            if proximos:
+                if linhas:
+                    linhas.append("")
+                linhas.append(f"🔔 PRÓXIMOS DO VENCIMENTO (até {dias_alerta} dias):")
+                for nome, val, dias in sorted(proximos, key=lambda x: x[2]):
+                    linhas.append(f"   • {nome} — faltam {dias} dia(s) (vence em {val})")
+
+            mensagem = "\n".join(linhas)
+            titulo = "Alerta de Validade de Produtos"
+            if vencidos:
+                messagebox.showerror(titulo, mensagem)
+            else:
+                messagebox.showwarning(titulo, mensagem)
+
+            try:
+                log_user_action("Alerta de Validade",
+                                f"Vencidos: {len(vencidos)} | Vencem hoje: {len(ultimo_dia)} | Próximos: {len(proximos)}")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[VALIDADE] Erro ao verificar validades: {e}")
+
     def show_quantum_dashboard(self):
         """
         if not check_permission("util.dashboard"):
