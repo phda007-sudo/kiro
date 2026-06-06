@@ -21912,6 +21912,8 @@ def _mysql_load_config():
         "taxa_garcom_ativa": False,
         "garcom_obrigatorio_pagamento": False,
         "modo_supermercado": False,
+        "dias_alerta_validade": 15,
+        "dias_alerta_recompra": 7,
         "pagamento_mostrar_total_venda": True,
         "pagamento_mostrar_cliente": True,
         "pagamento_mostrar_entrega": True,
@@ -21921,7 +21923,7 @@ def _mysql_load_config():
     for row in rows:
         chave = row['chave']
         valor = row['valor']
-        if chave in ['last_coupon_number', 'last_comanda_number', 'atacado_qtd_minima']:
+        if chave in ['last_coupon_number', 'last_comanda_number', 'atacado_qtd_minima', 'dias_alerta_validade', 'dias_alerta_recompra']:
             result[chave] = int(valor) if valor else 0
         elif chave in [
             'atacado_habilitado',
@@ -26099,15 +26101,15 @@ def authenticate_user():
     header_frame = tk.Frame(card_frame, bg=BG_CARD)
     header_frame.pack(fill='x', pady=(0, 6))
 
-    tk.Label(header_frame, text="⚛", font=("Segoe UI", 38, "bold"),
+    tk.Label(header_frame, text="💊", font=("Segoe UI", 38, "bold"),
              bg=BG_CARD, fg=PRIMARY_COLOR).pack(side='left', padx=(0, 12))
 
     title_container = tk.Frame(header_frame, bg=BG_CARD)
     title_container.pack(side='left', fill='x', expand=True)
 
-    tk.Label(title_container, text="PDV QUANTUM", font=("Segoe UI", 22, "bold"),
+    tk.Label(title_container, text="PDV FARMÁCIA", font=("Segoe UI", 22, "bold"),
              bg=BG_CARD, fg=TEXT_COLOR, anchor='w').pack(fill='x')
-    tk.Label(title_container, text="Supreme Ultra Professional", font=("Segoe UI", 10),
+    tk.Label(title_container, text="Sistema de Gestão para Farmácia", font=("Segoe UI", 10),
              bg=BG_CARD, fg=SECONDARY_TEXT, anchor='w').pack(fill='x')
 
     # Separador com brilho azul/verde
@@ -26698,6 +26700,13 @@ PERMISSION_GROUPS = {
         "clientes.ver_historico": "Ver Histórico de Compras do Cliente",
         "clientes.ver_dividas": "Ver Dívidas/Fiado Pendente do Cliente",
         "clientes.ver_cashback": "Ver Saldo de Cashback/Fidelidade do Cliente"
+    },
+    "Tratamentos (Farmácia)": {
+        "tratamentos.acessar": "Acessar Cadastro de Tratamentos / Uso Contínuo",
+        "tratamentos.criar": "Cadastrar Novo Tratamento de Cliente",
+        "tratamentos.editar": "Editar Tratamento Existente",
+        "tratamentos.excluir": "Excluir Tratamento do Cadastro",
+        "tratamentos.registrar_recompra": "Registrar Recompra de Medicamento do Tratamento"
     },
     "Fornecedores": {
         "fornecedores.acessar": "Acessar Tela de Cadastro de Fornecedores",
@@ -27881,6 +27890,7 @@ EMPRESA_FILE = os.path.join(DATA_DIR, "empresa.json")
 CONTAS_A_PAGAR_FILE = os.path.join(DATA_DIR, "contas_a_pagar.json")
 CONTAS_A_RECEBER_FILE = os.path.join(DATA_DIR, "contas_a_receber.json")
 NOTAS_ENTRADA_FILE = os.path.join(DATA_DIR, "notas_entrada.json")
+TRATAMENTOS_FILE = os.path.join(DATA_DIR, "tratamentos.json")
 COMANDAS_FILE = os.path.join(DATA_DIR, "comandas.json")
 ANIVERSARIO_CONFIG_FILE = os.path.join(DATA_DIR, "aniversario_whatsapp_config.json")
 DEFAULT_ANIVERSARIO_CONFIG = {
@@ -27927,6 +27937,10 @@ DEFAULT_CONFIG = {
     "taxa_garcom_ativa": False,
     "garcom_obrigatorio_pagamento": False,
     "modo_supermercado": False,
+    # Dias de antecedência para alertar produtos próximos do vencimento
+    "dias_alerta_validade": 15,
+    # Dias de antecedência para lembrar a recompra de medicamentos de uso contínuo
+    "dias_alerta_recompra": 7,
     # Visibilidade dos itens do topo da tela de Forma de Pagamento
     "pagamento_mostrar_total_venda": True,
     "pagamento_mostrar_cliente": True,
@@ -36116,6 +36130,191 @@ class LabelPrintConfigWindow(tk.Toplevel):
         except tk.TclError:
             messagebox.showerror("Erro", "Quantidade inválida.", parent=self)
 
+def calcular_status_validade(validade_str, dias_alerta=15):
+    """Calcula o status de validade de um produto a partir de uma data DD/MM/AAAA.
+
+    Args:
+        validade_str: Data de validade no formato 'DD/MM/AAAA' (ou vazio/None).
+        dias_alerta: Quantos dias antes do vencimento o produto entra em alerta (padrão 15).
+
+    Returns:
+        dict com as chaves:
+          - 'status': 'sem_controle' | 'invalido' | 'ok' | 'proximo' | 'ultimo_dia' | 'vencido'
+          - 'dias': dias restantes até o vencimento (negativo se já vencido) ou None
+          - 'mensagem': texto descritivo para exibir ao usuário
+    """
+    if not validade_str or not str(validade_str).strip():
+        return {'status': 'sem_controle', 'dias': None, 'mensagem': ''}
+    try:
+        venc = datetime.datetime.strptime(str(validade_str).strip(), '%d/%m/%Y').date()
+    except (ValueError, TypeError):
+        return {'status': 'invalido', 'dias': None,
+                'mensagem': 'Data de validade inválida. Use o formato DD/MM/AAAA.'}
+
+    hoje = datetime.date.today()
+    dias = (venc - hoje).days
+
+    if dias < 0:
+        return {'status': 'vencido', 'dias': dias,
+                'mensagem': f'⛔ PRODUTO VENCIDO há {abs(dias)} dia(s) (venceu em {validade_str}).'}
+    if dias == 0:
+        return {'status': 'ultimo_dia', 'dias': 0,
+                'mensagem': f'⚠️ ÚLTIMO DIA DE VALIDADE! O produto vence hoje ({validade_str}).'}
+    if dias <= dias_alerta:
+        return {'status': 'proximo', 'dias': dias,
+                'mensagem': f'🔔 Produto perto de vencer: faltam {dias} dia(s) (vence em {validade_str}).'}
+    return {'status': 'ok', 'dias': dias,
+            'mensagem': f'✅ Validade OK: faltam {dias} dia(s) (vence em {validade_str}).'}
+
+
+def calcular_status_recompra(data_proxima_str, dias_alerta=7):
+    """Calcula o status de recompra de um tratamento a partir da data prevista (DD/MM/AAAA).
+
+    Returns:
+        dict com 'status' ('sem_data'|'invalido'|'ok'|'proximo'|'hoje'|'atrasado'),
+        'dias' (dias restantes, negativo se atrasado) e 'mensagem'.
+    """
+    if not data_proxima_str or not str(data_proxima_str).strip():
+        return {'status': 'sem_data', 'dias': None, 'mensagem': ''}
+    try:
+        prox = datetime.datetime.strptime(str(data_proxima_str).strip(), '%d/%m/%Y').date()
+    except (ValueError, TypeError):
+        return {'status': 'invalido', 'dias': None, 'mensagem': 'Data prevista inválida (use DD/MM/AAAA).'}
+
+    hoje = datetime.date.today()
+    dias = (prox - hoje).days
+
+    if dias < 0:
+        return {'status': 'atrasado', 'dias': dias,
+                'mensagem': f'⛔ Recompra ATRASADA há {abs(dias)} dia(s) (prevista para {data_proxima_str}).'}
+    if dias == 0:
+        return {'status': 'hoje', 'dias': 0,
+                'mensagem': f'⚠️ Recompra prevista para HOJE ({data_proxima_str}).'}
+    if dias <= dias_alerta:
+        return {'status': 'proximo', 'dias': dias,
+                'mensagem': f'🔔 Recompra em {dias} dia(s) (prevista para {data_proxima_str}).'}
+    return {'status': 'ok', 'dias': dias,
+            'mensagem': f'✅ Em dia: faltam {dias} dia(s) (prevista para {data_proxima_str}).'}
+
+
+class CadastroTratamentosWindow(BaseCadastroWindow):
+    """Cadastro de tratamentos de clientes com lembrete de recompra de medicamentos.
+
+    Voltado para farmácias: registra o medicamento de uso contínuo de um cliente,
+    a posologia, a data de início/compra e por quantos dias a quantidade comprada
+    dura. O sistema calcula a data prevista da próxima compra e alerta quando ela
+    se aproxima ou fica atrasada.
+    """
+
+    def __init__(self, parent, data_dict, filepath, app=None):
+        customers = getattr(app, 'customers', {}) or {}
+        products = getattr(app, 'products', {}) or {}
+        cliente_options = [''] + sorted(
+            [f"{cid} - {c.get('nome', '')}" for cid, c in customers.items() if isinstance(c, dict)],
+            key=lambda s: s.lower()
+        )
+        produto_options = [''] + sorted(
+            [f"{pid} - {p.get('nome', '')}" for pid, p in products.items() if isinstance(p, dict)],
+            key=lambda s: s.lower()
+        )
+        fields = {
+            'cliente_id': {'label': 'Cliente / Paciente', 'type': 'combo', 'options': cliente_options, 'required': True, 'width': 45},
+            'produto_id': {'label': 'Medicamento', 'type': 'combo', 'options': produto_options, 'required': True, 'width': 45},
+            'posologia': {'label': 'Posologia (ex.: 1 comp. 2x ao dia)', 'type': 'entry', 'width': 45},
+            'data_inicio': {'label': 'Início / Data da Compra', 'type': 'date', 'required': True},
+            'duracao_dias': {'label': 'Duração do estoque comprado (dias)', 'type': 'spin_int', 'from': 1, 'to': 3650, 'default': 30, 'required': True},
+            'uso_continuo': {'label': 'Uso Contínuo', 'type': 'check', 'check_text': 'Tratamento de uso contínuo', 'default': True},
+            'telefone': {'label': 'Telefone p/ Lembrete', 'type': 'entry', 'width': 25},
+            'observacao': {'label': 'Observações', 'type': 'text', 'height': 3, 'width': 45},
+        }
+        tree_cols = ('id', 'cliente_nome', 'produto_nome', 'data_inicio', 'duracao_dias', 'data_proxima_compra', 'uso_continuo', 'situacao')
+        tree_headings = ('ID', 'Cliente', 'Medicamento', 'Início', 'Duração (dias)', 'Próxima Compra', 'Contínuo', 'Situação')
+        super().__init__(parent, "💊 Cadastro de Tratamentos (Uso Contínuo)", data_dict, filepath,
+                         fields, tree_cols, tree_headings, app=app)
+
+        # Botão para registrar recompra (renova a data de início para hoje) + excluir
+        self.recompra_btn = ttk.Button(self.form_buttons_frame, text="Recompra Hoje", underline=0,
+                                        command=self._registrar_recompra, width=14, bootstyle="primary")
+        self.recompra_btn.pack(pady=2, fill=tk.X)
+        self.excluir_btn.pack(pady=2, fill=tk.X)
+
+    def _get_unique_fields(self):
+        # Um mesmo cliente pode ter vários tratamentos, então não há campo único.
+        return []
+
+    def _calcular_proxima_compra(self, data_inicio_str, duracao_dias):
+        """Retorna a data prevista da próxima compra (DD/MM/AAAA) = início + duração."""
+        try:
+            di = datetime.datetime.strptime(str(data_inicio_str).strip(), '%d/%m/%Y').date()
+            dur = int(duracao_dias)
+            return (di + datetime.timedelta(days=dur)).strftime('%d/%m/%Y')
+        except (ValueError, TypeError):
+            return ''
+
+    def _collect_form_data(self):
+        data = super()._collect_form_data()
+        # Guarda os nomes (para exibicao e lembretes) a partir dos combos "ID - Nome"
+        cli_raw = self.vars['cliente_id'].get() if 'cliente_id' in self.vars else ''
+        data['cliente_nome'] = cli_raw.split(' - ', 1)[1] if ' - ' in cli_raw else ''
+        prod_raw = self.vars['produto_id'].get() if 'produto_id' in self.vars else ''
+        data['produto_nome'] = prod_raw.split(' - ', 1)[1] if ' - ' in prod_raw else ''
+        # Calcula a data prevista da próxima compra
+        data['data_proxima_compra'] = self._calcular_proxima_compra(
+            data.get('data_inicio', ''), data.get('duracao_dias', 0)
+        )
+        return data
+
+    def _get_item_values_for_tree(self, item_data):
+        cliente = item_data.get('cliente_nome', '') or item_data.get('cliente_id', '')
+        produto = item_data.get('produto_nome', '') or item_data.get('produto_id', '')
+        cont = 'Sim' if item_data.get('uso_continuo') else 'Não'
+        prox = item_data.get('data_proxima_compra', '')
+        try:
+            dias_alerta = int(getattr(self.parent_app, 'config_data', {}).get('dias_alerta_recompra', 7))
+        except (ValueError, TypeError, AttributeError):
+            dias_alerta = 7
+        st = calcular_status_recompra(prox, dias_alerta)
+        situ_map = {
+            'ok': 'Em dia', 'proximo': 'Comprar em breve', 'hoje': 'Comprar HOJE',
+            'atrasado': 'ATRASADO', 'sem_data': '-', 'invalido': 'Data inválida'
+        }
+        situacao = situ_map.get(st['status'], '-')
+        return [cliente, produto, item_data.get('data_inicio', ''),
+                item_data.get('duracao_dias', ''), prox, cont, situacao]
+
+    def _registrar_recompra(self):
+        if not self.selected_item_id:
+            messagebox.showwarning("Seleção", "Selecione um tratamento para registrar a recompra.", parent=self)
+            return
+        if not check_permission("tratamentos.registrar_recompra"):
+            messagebox.showerror("Acesso Negado", "Você não tem permissão para registrar recompra.", parent=self)
+            return
+        item = self.data_dict.get(self.selected_item_id)
+        if not item:
+            return
+        hoje = datetime.date.today().strftime('%d/%m/%Y')
+        dur = item.get('duracao_dias', 0)
+        item['data_inicio'] = hoje
+        item['data_proxima_compra'] = self._calcular_proxima_compra(hoje, dur)
+        item['ultima_recompra'] = hoje
+        if save_data(self.filepath, self.data_dict):
+            try:
+                log_user_action("Tratamentos",
+                                f"Recompra registrada: {item.get('produto_nome', '')} / {item.get('cliente_nome', '')} - proxima {item['data_proxima_compra']}")
+            except Exception:
+                pass
+            messagebox.showinfo("Recompra Registrada",
+                                f"Recompra registrada em {hoje}.\nPróxima compra prevista: {item['data_proxima_compra']}.",
+                                parent=self)
+            self._load_items_to_tree()
+            if self.tree.exists(self.selected_item_id):
+                self.tree.selection_set(self.selected_item_id)
+            if hasattr(self.parent_app, 'refresh_data_views'):
+                self.parent_app.refresh_data_views()
+        else:
+            messagebox.showerror("Erro", "Falha ao salvar a recompra.", parent=self)
+
+
 class EntradaNotasWindow(tk.Toplevel):
     def __init__(self, master, parent_app):
         super().__init__(master)
@@ -36136,6 +36335,10 @@ class EntradaNotasWindow(tk.Toplevel):
         self.custo_var = tk.StringVar()
         self.total_item_var = tk.StringVar(value="R$ 0,00")
         self.total_nota_var = tk.StringVar(value="R$ 0,00")
+        # Controle opcional de Lote e Validade (habilitado via checkbox)
+        self.controlar_validade_var = tk.BooleanVar(value=False)
+        self.lote_var = tk.StringVar()
+        self.validade_var = tk.StringVar()
         self.nota_fiscal_var = tk.StringVar(value=str(get_next_nota_entrada_number()))
         # Data da Nota com Calendário
         self.condicao_pagamento_var = tk.StringVar(value="À Vista")
@@ -36208,7 +36411,35 @@ class EntradaNotasWindow(tk.Toplevel):
         ttk.Label(detalhes_frame, text="Total Item:").grid(row=0, column=4, sticky="w", padx=5)
         ttk.Label(detalhes_frame, textvariable=self.total_item_var, foreground="blue", font=("Segoe UI", 10, "bold")).grid(row=0, column=5, sticky="w", padx=5)
         
-        ttk.Button(itens_frame, text="Adicionar Item (F2)", underline=1, command=self._adicionar_item_a_nota, bootstyle="success").grid(row=2, column=0, columnspan=2, sticky="ew", pady=10, padx=5)
+        # --- Controle opcional de Lote e Validade ---
+        lote_frame = ttk.Frame(itens_frame)
+        lote_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(5, 0), padx=5)
+        lote_frame.columnconfigure(2, weight=1)
+        lote_frame.columnconfigure(4, weight=1)
+
+        self.chk_validade = ttk.Checkbutton(
+            lote_frame,
+            text="Controlar Lote e Validade deste produto",
+            variable=self.controlar_validade_var,
+            command=self._toggle_lote_validade,
+            bootstyle="primary-round-toggle"
+        )
+        self.chk_validade.grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 4))
+
+        ttk.Label(lote_frame, text="Lote:").grid(row=1, column=0, sticky="w", padx=(0, 5))
+        self.lote_entry = ttk.Entry(lote_frame, textvariable=self.lote_var, width=18, state="disabled")
+        self.lote_entry.grid(row=1, column=1, sticky="w", padx=(0, 15))
+
+        ttk.Label(lote_frame, text="Validade (DD/MM/AAAA):").grid(row=1, column=2, sticky="w", padx=(0, 5))
+        self.validade_entry = ttk.Entry(lote_frame, textvariable=self.validade_var, width=15, state="disabled")
+        self.validade_entry.grid(row=1, column=3, sticky="w", padx=(0, 5))
+        ttk.Label(
+            lote_frame,
+            text="Alerta automático 15 dias antes do vencimento.",
+            font=("Segoe UI", 8), foreground="#666666"
+        ).grid(row=1, column=4, sticky="w", padx=(5, 0))
+
+        ttk.Button(itens_frame, text="Adicionar Item (F2)", underline=1, command=self._adicionar_item_a_nota, bootstyle="success").grid(row=3, column=0, columnspan=2, sticky="ew", pady=10, padx=5)
 
         # Frame da Lista de Itens (Direita e Expansível)
         lista_frame = ttk.Labelframe(main_frame, text="Itens da Nota", padding="10")
@@ -36217,13 +36448,15 @@ class EntradaNotasWindow(tk.Toplevel):
         lista_frame.rowconfigure(0, weight=1)
 
         # Treeview para Itens da Nota
-        self.tree_itens = ttk.Treeview(lista_frame, columns=('id', 'codigo_barras', 'nome', 'qtd', 'custo', 'total'), show='headings', selectmode='browse')
+        self.tree_itens = ttk.Treeview(lista_frame, columns=('id', 'codigo_barras', 'nome', 'qtd', 'custo', 'total', 'lote', 'validade'), show='headings', selectmode='browse')
         self.tree_itens.heading('id', text='ID', anchor=tk.W)
         self.tree_itens.heading('codigo_barras', text='Cód. Barras', anchor=tk.W)
         self.tree_itens.heading('nome', text='Produto', anchor=tk.W)
         self.tree_itens.heading('qtd', text='Qtd', anchor=tk.CENTER)
         self.tree_itens.heading('custo', text='Custo Unit.', anchor=tk.E)
         self.tree_itens.heading('total', text='Total', anchor=tk.E)
+        self.tree_itens.heading('lote', text='Lote', anchor=tk.W)
+        self.tree_itens.heading('validade', text='Validade', anchor=tk.CENTER)
         
         self.tree_itens.column('id', width=50, stretch=tk.NO)
         self.tree_itens.column('codigo_barras', width=120, stretch=tk.NO)
@@ -36231,6 +36464,8 @@ class EntradaNotasWindow(tk.Toplevel):
         self.tree_itens.column('qtd', width=70, anchor=tk.CENTER, stretch=tk.NO)
         self.tree_itens.column('custo', width=100, anchor=tk.E, stretch=tk.NO)
         self.tree_itens.column('total', width=120, anchor=tk.E, stretch=tk.NO)
+        self.tree_itens.column('lote', width=100, anchor=tk.W, stretch=tk.NO)
+        self.tree_itens.column('validade', width=100, anchor=tk.CENTER, stretch=tk.NO)
         
         self.tree_itens.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         
@@ -36347,6 +36582,25 @@ class EntradaNotasWindow(tk.Toplevel):
         except Exception:
             self.total_item_var.set("R$ 0,00")
 
+    def _toggle_lote_validade(self):
+        """Habilita ou desabilita os campos de Lote e Validade conforme o checkbox.
+
+        Quando o checkbox está desmarcado, o controle de validade NÃO é usado
+        para o produto (os campos ficam desabilitados e são ignorados).
+        """
+        if self.controlar_validade_var.get():
+            self.lote_entry.config(state="normal")
+            self.validade_entry.config(state="normal")
+            try:
+                self.validade_entry.focus()
+            except Exception:
+                pass
+        else:
+            self.lote_var.set("")
+            self.validade_var.set("")
+            self.lote_entry.config(state="disabled")
+            self.validade_entry.config(state="disabled")
+
     def _adicionar_item_a_nota(self):
         produto_str = self.produto_var.get().strip()
         qtd_str = self.qtd_var.get().strip()
@@ -36371,29 +36625,69 @@ class EntradaNotasWindow(tk.Toplevel):
             total = qtd * custo
             
             produto_nome = self.products[produto_id]['nome']
-            
+
+            # Captura de Lote e Validade (somente se o controle estiver habilitado)
+            lote = ""
+            validade = ""
+            status_validade = None
+            if self.controlar_validade_var.get():
+                lote = self.lote_var.get().strip()
+                validade = self.validade_var.get().strip()
+                if validade:
+                    try:
+                        _dias_alerta_cfg = int(getattr(self.parent_app, 'config_data', {}).get("dias_alerta_validade", 15))
+                    except (ValueError, TypeError, AttributeError):
+                        _dias_alerta_cfg = 15
+                    status_validade = calcular_status_validade(validade, _dias_alerta_cfg)
+                    if status_validade['status'] == 'invalido':
+                        messagebox.showerror("Validade Inválida",
+                                             "Informe a validade no formato DD/MM/AAAA.", parent=self)
+                        self.validade_entry.focus()
+                        return
+
             if produto_id in self.carrinho_nota:
                 # Atualiza item existente
                 self.carrinho_nota[produto_id]['qtd'] += qtd
                 self.carrinho_nota[produto_id]['custo'] = custo # Mantém o último custo unitário
                 self.carrinho_nota[produto_id]['total'] += total
+                # Mantém o último lote/validade informado, se houver
+                if self.controlar_validade_var.get():
+                    self.carrinho_nota[produto_id]['lote'] = lote
+                    self.carrinho_nota[produto_id]['validade'] = validade
             else:
                 # Adiciona novo item
                 self.carrinho_nota[produto_id] = {
                     'nome': produto_nome,
                     'qtd': qtd,
                     'custo': custo,
-                    'total': total
+                    'total': total,
+                    'lote': lote,
+                    'validade': validade
                 }
             
             self._atualizar_treeview()
             self._atualizar_total_nota()
+
+            # Alerta imediato sobre a situação da validade informada
+            if status_validade and status_validade['status'] in ('proximo', 'ultimo_dia', 'vencido'):
+                titulo_alerta = {
+                    'proximo': "Produto Perto de Vencer",
+                    'ultimo_dia': "Último Dia de Validade",
+                    'vencido': "Produto Vencido"
+                }[status_validade['status']]
+                msg_alerta = f"{produto_nome}\n\n{status_validade['mensagem']}"
+                if status_validade['status'] == 'vencido':
+                    messagebox.showerror(titulo_alerta, msg_alerta, parent=self)
+                else:
+                    messagebox.showwarning(titulo_alerta, msg_alerta, parent=self)
             
             # Limpa campos para próxima entrada
             self.produto_var.set("")
             self.qtd_var.set("1")
             self.custo_var.set("")
             self.total_item_var.set("R$ 0,00")
+            self.lote_var.set("")
+            self.validade_var.set("")
             self.produto_entry.focus()
 
         except ValueError as e:
@@ -36414,7 +36708,9 @@ class EntradaNotasWindow(tk.Toplevel):
                 item['nome'],
                 format_br_float(item['qtd'], 3),
                 format_br_float(item['custo'], 2),
-                format_br_currency(item['total'])
+                format_br_currency(item['total']),
+                item.get('lote', ''),
+                item.get('validade', '')
             ))
 
     def _atualizar_total_nota(self):
@@ -36481,6 +36777,24 @@ class EntradaNotasWindow(tk.Toplevel):
                 
                 # Atualiza o preço de custo (preco_compra)
                 produto['preco_compra'] = format_br_float(item['custo'], 2)
+
+                # Atualiza Lote e Validade quando o controle foi usado para o item
+                validade_item = item.get('validade', '')
+                if validade_item:
+                    produto['validade'] = validade_item
+                    produto['lote'] = item.get('lote', '')
+                    # Mantém um histórico de lotes recebidos para este produto
+                    lotes_hist = produto.get('lotes')
+                    if not isinstance(lotes_hist, list):
+                        lotes_hist = []
+                    lotes_hist.append({
+                        'lote': item.get('lote', ''),
+                        'validade': validade_item,
+                        'qtd': format_br_float(item['qtd'], 3),
+                        'data_entrada': datetime.datetime.now().strftime('%d/%m/%Y'),
+                        'nota_fiscal': nota_fiscal
+                    })
+                    produto['lotes'] = lotes_hist
                 
                 # Opcional: Atualizar preço de venda (se for o caso, pode ser uma opção)
                 # produto['preco_venda'] = ...
@@ -42553,7 +42867,7 @@ class PDVSuperApp:
         
         
         # ═══════════════════════════════════════════════════════════════════════════
-        self.root.title(f"🏪 PDV QUANTUM ULTRA - NEXUS EDITION💸 - Usuário: {logged_user}")
+        self.root.title(f"💊 PDV QUANTUM FARMÁCIA - Gestão e Vendas - Usuário: {logged_user}")
         # Armazena usuario logado globalmente para acesso pela StatusBar automatica
         try:
             import builtins
@@ -42597,6 +42911,7 @@ class PDVSuperApp:
         self.mesas = load_data(MESAS_FILE, {})  # Carrega mesas
         self.sales_log = load_data(SALES_FILE, [])
         self.empresa_data = load_data(EMPRESA_FILE, DEFAULT_EMPRESA)
+        self.tratamentos = load_data(TRATAMENTOS_FILE, {})  # Tratamentos/uso contínuo (farmácia)
         print("[DEBUG] Dados carregados")
 
         # Validação obrigatória da licença/vencimento antes de liberar o uso do sistema.
@@ -42878,8 +43193,159 @@ class PDVSuperApp:
         except Exception as e:
             print(f"[ANIVERSÁRIOS] Não foi possível iniciar o monitor automático: {e}")
 
+        # Verifica produtos próximos do vencimento/vencidos ao iniciar
+        try:
+            self.root.after(2500, self._verificar_validades_proximas)
+        except Exception as e:
+            print(f"[VALIDADE] Não foi possível agendar verificação de validades: {e}")
+
+        # Verifica lembretes de recompra de tratamentos (uso contínuo) ao iniciar
+        try:
+            self.root.after(3500, self._verificar_recompras_tratamentos)
+        except Exception as e:
+            print(f"[TRATAMENTOS] Não foi possível agendar verificação de recompras: {e}")
+
     
     
+    def _verificar_validades_proximas(self, dias_alerta=None):
+        """Verifica produtos com validade controlada e alerta sobre vencimentos.
+
+        Produtos sem validade preenchida (controle não utilizado na entrada de nota)
+        são ignorados. Exibe um resumo com itens vencidos, que vencem hoje
+        (último dia) e os próximos do vencimento (até `dias_alerta` dias antes).
+
+        O prazo de alerta (`dias_alerta`) é configurável em Configurações
+        ("Controle de Validade de Produtos"). Se não informado, usa o valor salvo.
+        """
+        try:
+            if dias_alerta is None:
+                try:
+                    dias_alerta = int(self.config_data.get("dias_alerta_validade", 15))
+                except (ValueError, TypeError, AttributeError):
+                    dias_alerta = 15
+            produtos = getattr(self, 'products', {}) or {}
+            vencidos, ultimo_dia, proximos = [], [], []
+
+            for pid, pdata in produtos.items():
+                if not isinstance(pdata, dict):
+                    continue
+                validade = pdata.get('validade', '')
+                if not validade:
+                    continue
+                status = calcular_status_validade(validade, dias_alerta)
+                nome = pdata.get('nome', f'Produto {pid}')
+                if status['status'] == 'vencido':
+                    vencidos.append((nome, validade, status['dias']))
+                elif status['status'] == 'ultimo_dia':
+                    ultimo_dia.append((nome, validade))
+                elif status['status'] == 'proximo':
+                    proximos.append((nome, validade, status['dias']))
+
+            if not (vencidos or ultimo_dia or proximos):
+                return
+
+            linhas = []
+            if vencidos:
+                linhas.append("⛔ VENCIDOS:")
+                for nome, val, dias in sorted(vencidos, key=lambda x: x[2]):
+                    linhas.append(f"   • {nome} — venceu em {val} (há {abs(dias)} dia(s))")
+            if ultimo_dia:
+                if linhas:
+                    linhas.append("")
+                linhas.append("⚠️ VENCEM HOJE (ÚLTIMO DIA):")
+                for nome, val in ultimo_dia:
+                    linhas.append(f"   • {nome} — vence hoje ({val})")
+            if proximos:
+                if linhas:
+                    linhas.append("")
+                linhas.append(f"🔔 PRÓXIMOS DO VENCIMENTO (até {dias_alerta} dias):")
+                for nome, val, dias in sorted(proximos, key=lambda x: x[2]):
+                    linhas.append(f"   • {nome} — faltam {dias} dia(s) (vence em {val})")
+
+            mensagem = "\n".join(linhas)
+            titulo = "Alerta de Validade de Produtos"
+            if vencidos:
+                messagebox.showerror(titulo, mensagem)
+            else:
+                messagebox.showwarning(titulo, mensagem)
+
+            try:
+                log_user_action("Alerta de Validade",
+                                f"Vencidos: {len(vencidos)} | Vencem hoje: {len(ultimo_dia)} | Próximos: {len(proximos)}")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[VALIDADE] Erro ao verificar validades: {e}")
+
+    def _verificar_recompras_tratamentos(self, dias_alerta=None):
+        """Verifica tratamentos e alerta sobre recompras de medicamentos de uso contínuo.
+
+        Exibe um resumo dos tratamentos com recompra atrasada, prevista para hoje ou
+        próxima (até `dias_alerta` dias). O prazo é configurável em Configurações
+        ("Lembrar recompra de tratamento..."). Tratamentos sem data prevista são ignorados.
+        """
+        try:
+            if dias_alerta is None:
+                try:
+                    dias_alerta = int(self.config_data.get("dias_alerta_recompra", 7))
+                except (ValueError, TypeError, AttributeError):
+                    dias_alerta = 7
+
+            tratamentos = getattr(self, 'tratamentos', {}) or {}
+            atrasados, hoje_list, proximos = [], [], []
+
+            for tid, t in tratamentos.items():
+                if not isinstance(t, dict):
+                    continue
+                prox = t.get('data_proxima_compra', '')
+                if not prox:
+                    continue
+                st = calcular_status_recompra(prox, dias_alerta)
+                cliente = t.get('cliente_nome', '') or f"Cliente {t.get('cliente_id', '?')}"
+                med = t.get('produto_nome', '') or f"Produto {t.get('produto_id', '?')}"
+                if st['status'] == 'atrasado':
+                    atrasados.append((cliente, med, prox, st['dias']))
+                elif st['status'] == 'hoje':
+                    hoje_list.append((cliente, med, prox))
+                elif st['status'] == 'proximo':
+                    proximos.append((cliente, med, prox, st['dias']))
+
+            if not (atrasados or hoje_list or proximos):
+                return
+
+            linhas = []
+            if atrasados:
+                linhas.append("⛔ RECOMPRA ATRASADA:")
+                for cli, med, prox, dias in sorted(atrasados, key=lambda x: x[3]):
+                    linhas.append(f"   • {cli} — {med} (prevista {prox}, há {abs(dias)} dia(s))")
+            if hoje_list:
+                if linhas:
+                    linhas.append("")
+                linhas.append("⚠️ COMPRAR HOJE:")
+                for cli, med, prox in hoje_list:
+                    linhas.append(f"   • {cli} — {med} (prevista hoje, {prox})")
+            if proximos:
+                if linhas:
+                    linhas.append("")
+                linhas.append(f"🔔 RECOMPRA PRÓXIMA (até {dias_alerta} dias):")
+                for cli, med, prox, dias in sorted(proximos, key=lambda x: x[3]):
+                    linhas.append(f"   • {cli} — {med} (em {dias} dia(s), {prox})")
+
+            mensagem = "\n".join(linhas)
+            titulo = "Lembrete de Recompra de Medicamentos"
+            if atrasados:
+                messagebox.showerror(titulo, mensagem)
+            else:
+                messagebox.showwarning(titulo, mensagem)
+
+            try:
+                log_user_action("Tratamentos",
+                                f"Lembrete de recompra - Atrasados: {len(atrasados)} | Hoje: {len(hoje_list)} | Próximos: {len(proximos)}")
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[TRATAMENTOS] Erro ao verificar recompras: {e}")
+
     def show_quantum_dashboard(self):
         """
         if not check_permission("util.dashboard"):
@@ -43670,6 +44136,7 @@ class PDVSuperApp:
             "produtos.acessar", "produtos.consultar", "produtos.importar",
             "categorias.acessar", "produtos.trocar_categoria_lote",
             "clientes.acessar", "clientes.importar",
+            "tratamentos.acessar",
             "fornecedores.acessar", "entregadores.acessar",
             "tamanhos.acessar", "cartoes.acessar", "bairros.acessar",
             "servicos.acessar", "vendedores.acessar", "garcons.acessar", "mesas.acessar", "mesas.gerenciar",
@@ -43685,6 +44152,7 @@ class PDVSuperApp:
             _add_cmd(cadastro_menu, "2.5   🔄 Trocar Categoria em Lote", self.open_troca_categoria_lote, "produtos.trocar_categoria_lote", accelerator="Ctrl+T")
             _add_cmd(cadastro_menu, "2.6   Clientes", self.open_cadastro_clientes, "clientes.acessar", accelerator="Ctrl+U")
             _add_cmd(cadastro_menu, "2.7   📥 Importar Clientes", self.importar_clientes_planilha, "clientes.importar", accelerator="Ctrl+Shift+J")
+            _add_cmd(cadastro_menu, "2.7.1 💊 Tratamentos / Uso Contínuo", self.open_cadastro_tratamentos, "tratamentos.acessar")
             _add_cmd(cadastro_menu, "2.8   Fornecedores", self.open_cadastro_fornecedores, "fornecedores.acessar", accelerator="Ctrl+G")
             _add_cmd(cadastro_menu, "2.9   🚚 Entregadores", self.open_cadastro_entregadores, "entregadores.acessar", accelerator="Ctrl+J")
             _add_cmd(cadastro_menu, "2.10  👕 Tamanhos", self.open_cadastro_tamanhos, "tamanhos.acessar", accelerator="Ctrl+H")
@@ -44230,7 +44698,7 @@ class PDVSuperApp:
             supermercado_top.columnconfigure(1, weight=1)
             ttk.Label(
                 supermercado_top,
-                text="🛒 Tela de Vendas",
+                text="💊 Farmácia - Tela de Vendas",
                 font=("Segoe UI", scale_font_size(18, self.root), "bold"),
                 foreground="#0d6efd"
             ).grid(row=0, column=0, sticky="w", padx=(0, 20))
@@ -44403,7 +44871,7 @@ class PDVSuperApp:
         cart_title_frame = ttk.Frame(right_frame)
         cart_title_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
         cart_title_frame.columnconfigure(0, weight=1)
-        ttk.Label(cart_title_frame, text="SACOLA / VENDA " if modo_supermercado else "Carrinho de Compras", font=("Segoe UI", scale_font_size(18 if modo_supermercado else 14, self.root), "bold"), foreground="#0d6efd" if modo_supermercado else None).grid(row=0, column=0, sticky="w")
+        ttk.Label(cart_title_frame, text="VENDA / BALCÃO " if modo_supermercado else "Carrinho de Compras", font=("Segoe UI", scale_font_size(18 if modo_supermercado else 14, self.root), "bold"), foreground="#0d6efd" if modo_supermercado else None).grid(row=0, column=0, sticky="w")
         ttk.Button(cart_title_frame, text="+", width=3, command=self.adicionar_aba_carrinho, bootstyle="success-outline").grid(row=0, column=1, padx=(0, 5))
         ttk.Button(cart_title_frame, text="-", width=3, command=self.remover_aba_carrinho_atual, bootstyle="danger-outline").grid(row=0, column=2)
         # Treeview Carrinho em múltiplas abas
@@ -44714,6 +45182,17 @@ class PDVSuperApp:
             CadastroClientesWindow(self.root, self.customers, CUSTOMERS_FILE, app=self)
         else:
             messagebox.showerror("Acesso Negado", "Você não tem permissão para gerenciar clientes.")
+
+    def open_cadastro_tratamentos(self):
+        try:
+            AUDITORIA.processo("Abrindo cadastro de tratamentos")
+        except Exception:
+            pass
+        if check_permission("tratamentos.acessar"):
+            self.tratamentos = load_data(TRATAMENTOS_FILE, {})
+            CadastroTratamentosWindow(self.root, self.tratamentos, TRATAMENTOS_FILE, app=self)
+        else:
+            messagebox.showerror("Acesso Negado", "Você não tem permissão para acessar o Cadastro de Tratamentos.")
     
     def open_cadastro_fornecedores(self):
         try:
@@ -46582,6 +47061,55 @@ Formatos suportados: Excel (.xlsx, .xls) e CSV (.csv)"""
             justify=tk.LEFT
         ).pack(anchor=tk.W, padx=8, pady=(0, 6))
 
+        # ===== OPÇÃO: CONTROLE DE VALIDADE DE PRODUTOS =====
+        validade_frame = ttk.LabelFrame(win, text="Controle de Validade de Produtos")
+        validade_frame.pack(pady=8, padx=10, fill=tk.X)
+        try:
+            dias_alerta_inicial = int(self.config_data.get("dias_alerta_validade", 15))
+        except (ValueError, TypeError):
+            dias_alerta_inicial = 15
+        dias_alerta_validade_var = tk.StringVar(value=str(dias_alerta_inicial))
+        validade_linha = ttk.Frame(validade_frame)
+        validade_linha.pack(anchor=tk.W, padx=8, pady=(6, 2))
+        ttk.Label(validade_linha, text="Alertar produtos a vencer com antecedência de:").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            validade_linha, from_=1, to=365, width=6,
+            textvariable=dias_alerta_validade_var
+        ).pack(side=tk.LEFT, padx=(6, 4))
+        ttk.Label(validade_linha, text="dia(s)").pack(side=tk.LEFT)
+        ttk.Label(
+            validade_frame,
+            text="Define quantos dias antes do vencimento o sistema avisa que o produto está perto de vencer. "
+                 "No dia do vencimento o aviso é de 'último dia' e, após a data, de 'produto vencido'. "
+                 "Aplica-se apenas a produtos com Lote/Validade informados na Entrada de Notas.",
+            foreground="gray",
+            wraplength=1100,
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, padx=8, pady=(0, 6))
+
+        # Antecedência do lembrete de recompra (uso contínuo)
+        try:
+            dias_recompra_inicial = int(self.config_data.get("dias_alerta_recompra", 7))
+        except (ValueError, TypeError):
+            dias_recompra_inicial = 7
+        dias_alerta_recompra_var = tk.StringVar(value=str(dias_recompra_inicial))
+        recompra_linha = ttk.Frame(validade_frame)
+        recompra_linha.pack(anchor=tk.W, padx=8, pady=(6, 2))
+        ttk.Label(recompra_linha, text="Lembrar recompra de tratamento (uso contínuo) com antecedência de:").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            recompra_linha, from_=0, to=365, width=6,
+            textvariable=dias_alerta_recompra_var
+        ).pack(side=tk.LEFT, padx=(6, 4))
+        ttk.Label(recompra_linha, text="dia(s)").pack(side=tk.LEFT)
+        ttk.Label(
+            validade_frame,
+            text="Usado pelo Cadastro de Tratamentos para avisar quando o medicamento de uso contínuo "
+                 "está perto de acabar e precisa ser comprado novamente.",
+            foreground="gray",
+            wraplength=1100,
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, padx=8, pady=(0, 6))
+
         # ===== OPÇÃO: TAXA DO GARÇOM / SERVIÇO =====
         taxa_garcom_frame = ttk.LabelFrame(win, text="Taxa do Garçom / Serviço")
         taxa_garcom_frame.pack(pady=8, padx=10, fill=tk.X)
@@ -46616,12 +47144,32 @@ Formatos suportados: Excel (.xlsx, .xls) e CSV (.csv)"""
                 messagebox.showerror("Erro", "Número do cupom inválido. Deve ser um número inteiro.", parent=win)
                 return
 
+            # Valida os dias de alerta de validade
+            try:
+                dias_alerta_validade = int(dias_alerta_validade_var.get())
+                if dias_alerta_validade < 1 or dias_alerta_validade > 365:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Erro", "Dias de alerta de validade inválido. Informe um número inteiro entre 1 e 365.", parent=win)
+                return
+
+            # Valida os dias de antecedência do lembrete de recompra
+            try:
+                dias_alerta_recompra = int(dias_alerta_recompra_var.get())
+                if dias_alerta_recompra < 0 or dias_alerta_recompra > 365:
+                    raise ValueError
+            except (ValueError, TypeError):
+                messagebox.showerror("Erro", "Dias de lembrete de recompra inválido. Informe um número inteiro entre 0 e 365.", parent=win)
+                return
+
             # Salva as novas opções de configuração
             modo_supermercado_anterior = cfg_bool(self.config_data.get("modo_supermercado", False), False)
             self.config_data["vendedor_obrigatorio"] = vendedor_obrig_var.get()
             self.config_data["imprimir_canhoto_loja"] = canhoto_loja_var.get()
             self.config_data["acrescentar_taxa_cartao_pagamento"] = taxa_cartao_var.get()
             self.config_data["modo_supermercado"] = modo_supermercado_var.get()
+            self.config_data["dias_alerta_validade"] = dias_alerta_validade
+            self.config_data["dias_alerta_recompra"] = dias_alerta_recompra
             self.config_data["taxa_garcom_ativa"] = taxa_garcom_var.get()
             self.config_data["garcom_obrigatorio_pagamento"] = garcom_obrigatorio_var.get()
             self.config_data["pagamento_mostrar_total_venda"] = pagamento_mostrar_total_venda_var.get()
@@ -46721,6 +47269,7 @@ Formatos suportados: Excel (.xlsx, .xls) e CSV (.csv)"""
         self.mesas = load_data(MESAS_FILE, {})  # Carrega mesas
         self.sales_log = load_data(SALES_FILE, [])
         self.empresa_data = load_data(EMPRESA_FILE, DEFAULT_EMPRESA)
+        self.tratamentos = load_data(TRATAMENTOS_FILE, {})
         self._filtrar_produtos()
         self._atualizar_carrinho_e_total()
         # Log de Performance Quantum
