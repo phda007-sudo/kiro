@@ -26099,15 +26099,15 @@ def authenticate_user():
     header_frame = tk.Frame(card_frame, bg=BG_CARD)
     header_frame.pack(fill='x', pady=(0, 6))
 
-    tk.Label(header_frame, text="⚛", font=("Segoe UI", 38, "bold"),
+    tk.Label(header_frame, text="💊", font=("Segoe UI", 38, "bold"),
              bg=BG_CARD, fg=PRIMARY_COLOR).pack(side='left', padx=(0, 12))
 
     title_container = tk.Frame(header_frame, bg=BG_CARD)
     title_container.pack(side='left', fill='x', expand=True)
 
-    tk.Label(title_container, text="PDV QUANTUM", font=("Segoe UI", 22, "bold"),
+    tk.Label(title_container, text="PDV FARMÁCIA", font=("Segoe UI", 22, "bold"),
              bg=BG_CARD, fg=TEXT_COLOR, anchor='w').pack(fill='x')
-    tk.Label(title_container, text="Supreme Ultra Professional", font=("Segoe UI", 10),
+    tk.Label(title_container, text="Sistema de Gestão para Farmácia", font=("Segoe UI", 10),
              bg=BG_CARD, fg=SECONDARY_TEXT, anchor='w').pack(fill='x')
 
     # Separador com brilho azul/verde
@@ -42553,7 +42553,7 @@ class PDVSuperApp:
         
         
         # ═══════════════════════════════════════════════════════════════════════════
-        self.root.title(f"🏪 PDV QUANTUM ULTRA - NEXUS EDITION💸 - Usuário: {logged_user}")
+        self.root.title(f"💊 PDV QUANTUM FARMÁCIA - Gestão e Vendas - Usuário: {logged_user}")
         # Armazena usuario logado globalmente para acesso pela StatusBar automatica
         try:
             import builtins
@@ -44230,7 +44230,7 @@ class PDVSuperApp:
             supermercado_top.columnconfigure(1, weight=1)
             ttk.Label(
                 supermercado_top,
-                text="🛒 Tela de Vendas",
+                text="💊 Farmácia - Tela de Vendas",
                 font=("Segoe UI", scale_font_size(18, self.root), "bold"),
                 foreground="#0d6efd"
             ).grid(row=0, column=0, sticky="w", padx=(0, 20))
@@ -44403,7 +44403,7 @@ class PDVSuperApp:
         cart_title_frame = ttk.Frame(right_frame)
         cart_title_frame.grid(row=1, column=0, sticky="ew", pady=(0, 5))
         cart_title_frame.columnconfigure(0, weight=1)
-        ttk.Label(cart_title_frame, text="SACOLA / VENDA " if modo_supermercado else "Carrinho de Compras", font=("Segoe UI", scale_font_size(18 if modo_supermercado else 14, self.root), "bold"), foreground="#0d6efd" if modo_supermercado else None).grid(row=0, column=0, sticky="w")
+        ttk.Label(cart_title_frame, text="VENDA / BALCÃO " if modo_supermercado else "Carrinho de Compras", font=("Segoe UI", scale_font_size(18 if modo_supermercado else 14, self.root), "bold"), foreground="#0d6efd" if modo_supermercado else None).grid(row=0, column=0, sticky="w")
         ttk.Button(cart_title_frame, text="+", width=3, command=self.adicionar_aba_carrinho, bootstyle="success-outline").grid(row=0, column=1, padx=(0, 5))
         ttk.Button(cart_title_frame, text="-", width=3, command=self.remover_aba_carrinho_atual, bootstyle="danger-outline").grid(row=0, column=2)
         # Treeview Carrinho em múltiplas abas
