@@ -36,7 +36,8 @@ COLS = {
     'codigo_barras': ['codigo_barras', 'ean', 'ean13', 'barcode', 'codigo', 'cod_barras',
                       'gtin', 'codigo de barras', 'cod barras', 'barras', 'cod. barras'],
     'categoria': ['categoria', 'category', 'grupo', 'group', 'classe', 'classe_terapeutica',
-                  'grupo_terapeutico', 'classe terapeutica', 'grupo terapeutico', 'tipo_medicamento'],
+                  'grupo_terapeutico', 'classe terapeutica', 'grupo terapeutico', 'tipo_medicamento',
+                  'indicacao', 'indicação', 'indicacao_terapeutica', 'indicaçao'],
 }
 
 
