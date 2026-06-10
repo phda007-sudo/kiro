@@ -7,16 +7,35 @@ APK compilado a partir de `PH_Server.7z` (projeto `02_modified_smali_resources`,
 - **APK:** `PHSERVER.apk`
 - **Versão:** 1.6.5-arm (versionCode 43)
 - **minSdk / targetSdk:** 16 / 28
-- **SHA-256:** `6f5ccc8f345fa1f3402237ec9d19616f4656f528cb40f1cc0f6d38546e3c3b12`
+- **SHA-256:** `bb63f7601a6b2d84ae9a24206cf562a43eba912e5691459966da3829f73a317a`
 - **Assinatura:** v1 (JAR) + v2 + v3 — verificado com `apksigner verify`.
 
 ## Mudanças incluídas neste build
 
 1. **Máscara de senha com `*`** — todos os campos de senha do app exibem `*`
    (classe `com.phda.phserver.AsteriskPasswordTransformationMethod`).
-2. **Auto-start no boot** — o servidor sobe sozinho quando o aparelho liga,
-   sem o usuário abrir/configurar o app (patch em
-   `com.esminis.server.library.service.AutoStart`).
+2. **Auto-start no boot (robusto)** — o servidor sobe sozinho quando o aparelho
+   liga, sem o usuário abrir/configurar o app:
+   - Patch em `com.esminis.server.library.service.AutoStart` (sempre inicia).
+   - NOVO receiver `com.phda.phserver.BootReceiver`, que replica o caminho
+     comprovado do `LockActivity`: **espera o componente de injeção ficar
+     pronto (~5s) via `getComponent(int)`** antes de chamar
+     `requestStartForeground()`. Isso resolve a falha de boot a frio (o DI do
+     app normalmente ainda não está pronto quando o `BOOT_COMPLETED` chega).
+   - Registrado para `BOOT_COMPLETED`, `QUICKBOOT_POWERON` (e variante HTC) e
+     `MY_PACKAGE_REPLACED` (re-arma após atualizar o app).
+
+## IMPORTANTE — requisitos do Android para o boot funcionar
+
+Estes dois pontos são imposições do próprio Android/fabricante e NÃO podem ser
+contornados por código:
+
+1. **Abra o app pelo menos UMA vez após instalar.** Apps recém-instalados ficam
+   em estado "stopped" e o Android NÃO entrega `BOOT_COMPLETED` até a primeira
+   abertura manual.
+2. **Permita o "autostart" do app** nas configurações do fabricante
+   (Xiaomi/MIUI, Huawei, Oppo/ColorOS, Samsung, etc.) e desative a otimização
+   de bateria para o app. Sem isso, o sistema bloqueia o início em background.
 
 ## Como instalar
 
