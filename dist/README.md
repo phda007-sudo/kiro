@@ -37,6 +37,11 @@ com as automações pedidas.
    - liga a escuta em `0.0.0.0` (`address="all"`) para **acesso remoto**;
    - sobe o servidor em foreground.
 
+   **Início no boot garantido:** `ServerPreferences.isStartOnBoot()` foi forçado
+   para `true` e o receiver `AutoStart` foi marcado `enabled/exported`. Assim o
+   servidor sobe sozinho após ligar o aparelho, sem depender de timing nem de
+   preferência salva (o receiver de boot consulta esse método diretamente).
+
 4. **Banco/usuário criados automaticamente** — assim que o servidor responde em
    `127.0.0.1:3306`, o Bootstrap cria (idempotente):
    - banco **`pdvpro`**
