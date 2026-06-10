@@ -7,7 +7,7 @@ APK compilado a partir de `PH_Server.7z` (projeto `02_modified_smali_resources`,
 - **APK:** `PHSERVER.apk`
 - **Versão:** 1.6.5-arm (versionCode 43)
 - **minSdk / targetSdk:** 16 / 28
-- **SHA-256:** `bb63f7601a6b2d84ae9a24206cf562a43eba912e5691459966da3829f73a317a`
+- **SHA-256:** `0679cbb74cfefd3e4d98abc2683ed3ad718b3a9a7c787e2c50b23f7530a883e5`
 - **Assinatura:** v1 (JAR) + v2 + v3 — verificado com `apksigner verify`.
 
 ## Mudanças incluídas neste build
