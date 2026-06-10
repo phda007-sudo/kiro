@@ -89,3 +89,66 @@ java -jar uber-apk-signer.jar --apks build/PHSERVER_unsigned.apk --out build
 - `smali/com/esminis/server/library/server/ServerPreferences.smali` — `getRootDirectory()` usa `getFilesDir()`
 - `smali/com/esminis/server/library/permission/PermissionRequester.smali` — `hasPermission()` retorna `true`
 - `apktool.yml` — `maxSdkVersion: 28` removido (instala em Android novo); `targetSdkVersion` = 28
+
+
+---
+
+## Auto-criação do banco `pdvpro` (usuário pdvpro / senha pdvpro) + acesso remoto
+
+Quando o servidor MariaDB sobe — tanto no **boot** (receiver `AutoStart`) quanto
+ao **abrir o app** (`LockActivity`) — uma rotina nova (`com.phda.phserver.AutoProvision`)
+provisiona tudo automaticamente, de forma **idempotente**:
+
+- escuta em `0.0.0.0` (preference `address = "all"`, definida ANTES do start no
+  boot, então o servidor já sobe aceitando conexões remotas);
+- banco `pdvpro` (`utf8mb4`);
+- usuário `pdvpro` / senha `pdvpro` em `'localhost'` e em `'%'` (qualquer host);
+- `GRANT ALL PRIVILEGES ON *.* ... WITH GRANT OPTION` (admin total) nos dois;
+- `FLUSH PRIVILEGES`.
+
+A rotina roda em uma thread daemon que **aguarda o servidor aceitar conexões**
+(retry por ~6 min, pois a primeira execução instala o MariaDB) e conecta como
+administrador `root` (sem senha, padrão das builds esminis) usando o
+`MySqlMiniClient` já embutido. Nunca lança exceção para fora (não quebra o app).
+
+### Conexão remota
+
+```
+Host:    <IP do aparelho na rede>
+Porta:   3306
+Usuário: pdvpro
+Senha:   pdvpro
+Banco:   pdvpro
+URI:     mysql://pdvpro:pdvpro@<IP>:3306/pdvpro
+JDBC:    jdbc:mariadb://<IP>:3306/pdvpro
+```
+
+> Segurança: usuário `pdvpro@'%'` com `ALL PRIVILEGES` e senha simples exposto na
+> rede é prático, porém **inseguro em redes não confiáveis**. Use apenas em rede
+> local controlada ou troque a senha/limite o host depois.
+
+### Arquivos desta funcionalidade
+
+- `03_phda_modifications_java/com/phda/phserver/AutoProvision.java` — rotina nova (compilada em `classes4.dex`)
+- `smali/com/esminis/server/library/service/AutoStart.smali` — chama `AutoProvision.onBoot()` no boot (antes do start)
+- `smali_classes3/com/phda/phserver/LockActivity.smali` — chama `AutoProvision.onAppStart()` ao abrir o app
+
+### Rebuild desta parte
+
+```bash
+# compila AutoProvision (com MySqlMiniClient/ServerConfigHelper no classpath)
+javac -source 8 -target 8 -bootclasspath android-28.jar -classpath android-28.jar \
+    -d build/javabin \
+    03_phda_modifications_java/com/phda/phserver/AutoProvision.java \
+    03_phda_modifications_java/com/phda/phserver/MySqlMiniClient.java \
+    03_phda_modifications_java/com/phda/phserver/ServerConfigHelper.java
+# gera dex apenas com AutoProvision (resto so no classpath, evita duplicar classe)
+java -cp r8.jar com.android.tools.r8.D8 --release --min-api 16 \
+    --lib android-28.jar --classpath build/javabin --output build/dex4 \
+    build/javabin/com/phda/phserver/AutoProvision.class \
+    build/javabin/com/phda/phserver/AutoProvision\$1.class
+# apktool b + injeta classes4.dex + assina
+java -jar apktool.jar b 02_modified_smali_resources -o build/unsigned.apk --use-aapt2
+#   (adicionar build/dex4/classes.dex como classes4.dex no zip do apk)
+java -jar uber-apk-signer.jar --apks build/unsigned.apk --out build
+```
