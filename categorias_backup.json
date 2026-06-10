@@ -1,0 +1,42 @@
+{
+  "1": {
+    "nome": "ANTICONCEPÇÃO",
+    "descricao": ""
+  },
+  "2": {
+    "nome": "OSTEOPOROSE",
+    "descricao": ""
+  },
+  "3": {
+    "nome": "HIPERTENSÃO",
+    "descricao": ""
+  },
+  "4": {
+    "nome": "ASMA",
+    "descricao": ""
+  },
+  "5": {
+    "nome": "RINITE",
+    "descricao": ""
+  },
+  "6": {
+    "nome": "DOENÇA DE PARKINSON",
+    "descricao": ""
+  },
+  "7": {
+    "nome": "DIABETES",
+    "descricao": ""
+  },
+  "8": {
+    "nome": "DIABETES MELLITUS + DOENÇA CARDIOVASCULAR",
+    "descricao": ""
+  },
+  "9": {
+    "nome": "GLAUCOMA",
+    "descricao": ""
+  },
+  "10": {
+    "nome": "DISLIPIDEMIA",
+    "descricao": ""
+  }
+}
